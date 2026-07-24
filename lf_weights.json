@@ -1,0 +1,19 @@
+{
+  "lf_nec_t2_md": 0.6428571428571429,
+  "lf_nec_fa_collapse": 0.6666666666666666,
+  "lf_nec_md_extreme": 0.6923076923076923,
+  "lf_hyp_t2s_t2": 0.2857142857142857,
+  "lf_hyp_spatial": 0.3125,
+  "lf_hyp_pericore": 0.5294117647058824,
+  "lf_hyp_t2s_strong": 0.6,
+  "lf_cel_md_mtr": 0.42857142857142855,
+  "lf_cel_md_strong": 0.25,
+  "lf_cel_t2_md": 0.6842105263157895,
+  "lf_inf_fa_periph": 0.0,
+  "lf_inf_md_intermed": 0.0,
+  "lf_bulk_near_median": 0.8571428571428571,
+  "lf_bulk_periph": 1.0,
+  "lf_bulk_rel_median": 0.6666666666666666,
+  "lf_ast_fa_mtr": 0.5,
+  "lf_ast_fa_rd": 0.5
+}

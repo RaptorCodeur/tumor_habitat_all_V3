@@ -1,0 +1,13 @@
+# Python >= 3.10
+# Install with: pip install -r requirements.txt
+# Note: tkinter is bundled with Python and does not need to be pip-installed.
+
+numpy>=1.24
+pandas>=1.5
+scikit-learn>=1.2
+scipy>=1.10
+joblib>=1.2
+matplotlib>=3.6
+seaborn>=0.12
+nibabel>=4.0
+napari>=0.4.18
