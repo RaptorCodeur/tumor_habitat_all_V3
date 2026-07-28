@@ -362,6 +362,75 @@ def _show_dtopo_help_window():
 
 
 # =================================================================
+# Atlas covariable parsing
+# =================================================================
+
+def _parse_atlas_covariates(names, rows, log=print):
+    """
+    Convert raw text entries (one row per mouse) into a float numpy matrix.
+
+    Rules per column:
+    - All values parseable as float  → continuous, used as-is
+    - Parseable as YYYY-MM-DD dates  → converted to integer days since earliest
+    - Otherwise (text categories)    → one-hot dummies (last category = reference)
+
+    Returns None if names is empty, else ndarray of shape (n_mice, p).
+    """
+    if not names or not rows:
+        return None
+
+    import numpy as np
+    import pandas as pd
+
+    n = len(rows)
+    columns = []   # list of (col_name, float_list)
+
+    for j, name in enumerate(names):
+        raw = [row[j] if j < len(row) else "" for row in rows]
+
+        # Numeric?
+        try:
+            col = [float(v) if v != "" else float("nan") for v in raw]
+            columns.append((name, col))
+            log(f"  Covariable '{name}': numerique ({col})")
+            continue
+        except ValueError:
+            pass
+
+        # Date?
+        try:
+            dates = pd.to_datetime(raw, format="%Y-%m-%d", errors="raise")
+            days  = (dates - dates.min()).days.values.astype(float)
+            columns.append((name, days.tolist()))
+            log(f"  Covariable '{name}': dates -> jours {days.tolist()}")
+            continue
+        except Exception:
+            pass
+
+        # Categorical dummies
+        unique_vals = list(dict.fromkeys(v for v in raw if v != ""))
+        if len(unique_vals) < 2:
+            log(f"  Covariable '{name}': ignoree (valeur unique ou vide)", "err")
+            continue
+        ref = unique_vals[-1]
+        for cat in unique_vals[:-1]:
+            col = [1.0 if v == cat else 0.0 for v in raw]
+            col_name = f"{name}[{cat}]"
+            columns.append((col_name, col))
+        log(f"  Covariable '{name}': categorielle — {len(unique_vals)-1} dummy(s), "
+            f"reference='{ref}'")
+
+    if not columns:
+        return None
+
+    mat = np.array([c for _, c in columns], dtype=float).T   # (n_mice, p)
+    col_names = [cn for cn, _ in columns]
+    log(f"  Matrice covariables: {mat.shape[0]} souris x {mat.shape[1]} colonnes "
+        f"({', '.join(col_names)})")
+    return mat
+
+
+# =================================================================
 # Main application
 # =================================================================
 
@@ -445,9 +514,13 @@ class HabitatApp(tk.Tk):
         self._disc_k_max      = tk.IntVar(value=7)
         self._disc_n_init     = tk.IntVar(value=N_INIT_GMM)
         self._disc_meta_k     = tk.IntVar(value=0)
-        self._disc_output_name = tk.StringVar(value="discovery")
-        self._disc_output_dir  = tk.StringVar(value="")
-        self.btn_disc_run     = None
+        self._disc_output_name     = tk.StringVar(value="discovery")
+        self._disc_output_dir      = tk.StringVar(value="")
+        self._disc_compare_enabled = tk.BooleanVar(value=False)
+        self._disc_group_names     = [tk.StringVar(value="Control"),
+                                       tk.StringVar(value="Treated")]
+        self._disc_gnames_frame    = None
+        self.btn_disc_run          = None
 
         # Joint clustering tab
         self._jt_animals      = []
@@ -464,9 +537,13 @@ class HabitatApp(tk.Tk):
         self._jt_dtopo_weight          = tk.DoubleVar(value=DTOPO_JOINT_WEIGHT)
         self._jt_dtopo_min_frac        = tk.DoubleVar(value=DTOPO_MIN_NECROSIS_FRACTION)
         self._jt_dtopo_min_frac_pct    = tk.IntVar(value=int(round(DTOPO_MIN_NECROSIS_FRACTION * 100)))
-        self._jt_output_name           = tk.StringVar(value="joint_clustering")
-        self._jt_output_dir   = tk.StringVar(value="")
-        self.btn_jt_run       = None
+        self._jt_output_name       = tk.StringVar(value="joint_clustering")
+        self._jt_output_dir        = tk.StringVar(value="")
+        self._jt_compare_enabled   = tk.BooleanVar(value=False)
+        self._jt_group_names       = [tk.StringVar(value="Control"),
+                                       tk.StringVar(value="Treated")]
+        self._jt_gnames_frame      = None
+        self.btn_jt_run            = None
 
         # Comparative analysis tab
         self._cmp_animals      = []
@@ -481,6 +558,23 @@ class HabitatApp(tk.Tk):
         self._cmp_output_name  = tk.StringVar(value="comparative_analysis")
         self._cmp_output_dir   = tk.StringVar(value="")
         self.btn_cmp_run       = None
+
+        # Atlas comparison tab
+        self._atl_animals      = []
+        self._atl_list_inner   = None
+        self._atl_k_min        = tk.IntVar(value=2)
+        self._atl_k_max        = tk.IntVar(value=7)
+        self._atl_k_override   = tk.StringVar(value="")
+        self._atl_n_init       = tk.IntVar(value=20)
+        self._atl_n_bootstrap  = tk.IntVar(value=30)
+        self._atl_n_perm       = tk.IntVar(value=999)
+        self._atl_normalization = tk.StringVar(value='robust_global')
+        self._atl_output_name  = tk.StringVar(value="atlas_comparison")
+        self._atl_output_dir   = tk.StringVar(value="")
+        self._atl_group_names  = [tk.StringVar(value="Control"),
+                                   tk.StringVar(value="Treated")]
+        self._atl_covar_names  = []   # list of tk.StringVar — names of covariables
+        self.btn_atl_run       = None
 
         self._notebook      = None   # reference kept for tab-restore on rebuild
         self._active_tab    = 0
@@ -541,6 +635,10 @@ class HabitatApp(tk.Tk):
         # Restore comparative animals list
         if self._cmp_animals and self._cmp_list_inner:
             self._cmp_refresh_list()
+
+        # Restore atlas animals list
+        if self._atl_animals and self._atl_list_inner:
+            self._atl_refresh_list()
 
         # Restore inter-method file list
         if self._im_csv_files and hasattr(self, '_im_lst_csv') and self._im_lst_csv:
@@ -636,14 +734,16 @@ class HabitatApp(tk.Tk):
                                       state='disabled')
         self.btn_napari.pack(fill='x')
 
-        # Tab 3 (Comparison): both comparison run buttons
-        self._action_comp = ttk.Frame(self._action_frame)
-        self.btn_ia_run = ttk.Button(self._action_comp, text=t("run_ia"),
+        # Tab 3 (Comparison): one button per sub-tab
+        self._action_ia = ttk.Frame(self._action_frame)
+        self.btn_ia_run = ttk.Button(self._action_ia, text=t("run_ia"),
                                       style="Primary.TButton",
                                       command=self._run_inter_animal)
-        self.btn_ia_run.pack(fill='x', pady=(0, 3))
-        self.btn_im_run = ttk.Button(self._action_comp, text=t("run_im"),
-                                      style="Secondary.TButton",
+        self.btn_ia_run.pack(fill='x')
+
+        self._action_im = ttk.Frame(self._action_frame)
+        self.btn_im_run = ttk.Button(self._action_im, text=t("run_im"),
+                                      style="Primary.TButton",
                                       command=self._run_inter_method)
         self.btn_im_run.pack(fill='x')
 
@@ -667,6 +767,13 @@ class HabitatApp(tk.Tk):
                                        style="Primary.TButton",
                                        command=self._run_comparative)
         self.btn_cmp_run.pack(fill='x')
+
+        # Tab 7 (Atlas)
+        self._action_atlas = ttk.Frame(self._action_frame)
+        self.btn_atl_run = ttk.Button(self._action_atlas, text="▶  Run Atlas Comparison",
+                                       style="Primary.TButton",
+                                       command=self._run_atlas)
+        self.btn_atl_run.pack(fill='x')
 
         # Show the main-analysis buttons by default; tab change swaps frames
         self._action_main.pack(fill='x')
@@ -697,52 +804,275 @@ class HabitatApp(tk.Tk):
         self._notebook = notebook
 
         self.tab1 = ttk.Frame(notebook)
-        self.tab2 = ttk.Frame(notebook)
-        self.tab3 = ttk.Frame(notebook)
         self.tab4 = ttk.Frame(notebook)
         self.tab5 = ttk.Frame(notebook)
         self.tab6 = ttk.Frame(notebook)
         self.tab7 = ttk.Frame(notebook)
+        self.tab8 = ttk.Frame(notebook)
 
-        notebook.add(self.tab1, text=t("tab_files"))
-        notebook.add(self.tab2, text=t("tab_method"))
-        notebook.add(self.tab3, text=t("tab_output"))
+        notebook.add(self.tab1, text="Clustering")
         notebook.add(self.tab4, text=t("tab_comparison"))
         notebook.add(self.tab5, text="Discovery")
         notebook.add(self.tab6, text="Joint")
         notebook.add(self.tab7, text="Compare")
+        notebook.add(self.tab8, text="Atlas")
 
-        self._build_tab_files(self.tab1)
-        self._build_tab_method(self.tab2)
-        self._build_tab_output(self.tab3)
+        self._build_tab_clustering(self.tab1)
         self._build_tab_comparison(self.tab4)
         self._build_tab_discovery(self.tab5)
         self._build_tab_joint(self.tab6)
         self._build_tab_comparative(self.tab7)
+        self._build_tab_atlas(self.tab8)
 
         # Swap action buttons when the user switches tabs
         _action_map = {
             0: self._action_main,
-            1: self._action_main,
-            2: self._action_main,
-            3: self._action_comp,
-            4: self._action_disc,
-            5: self._action_joint,
-            6: self._action_cmp,
+            2: self._action_disc,
+            3: self._action_joint,
+            4: self._action_cmp,
+            5: self._action_atlas,
         }
+
+        _all_action_frames = (self._action_main, self._action_ia, self._action_im,
+                              self._action_disc, self._action_joint,
+                              self._action_cmp, self._action_atlas)
+
+        def _active_comp_frame():
+            try:
+                return (self._action_ia
+                        if self._comp_sub.index('current') == 0
+                        else self._action_im)
+            except Exception:
+                return self._action_ia
 
         def _on_tab_change(event=None):
             try:
                 idx = notebook.index('current')
             except Exception:
                 idx = 0
-            for f in (self._action_main, self._action_comp,
-                      self._action_disc, self._action_joint,
-                      self._action_cmp):
+            for f in _all_action_frames:
                 f.pack_forget()
-            _action_map.get(idx, self._action_main).pack(fill='x')
+            if idx == 1:
+                _active_comp_frame().pack(fill='x')
+            else:
+                _action_map.get(idx, self._action_main).pack(fill='x')
 
         notebook.bind('<<NotebookTabChanged>>', _on_tab_change)
+        self._comp_sub.bind('<<NotebookTabChanged>>',
+                            lambda e: _on_tab_change()
+                            if notebook.index('current') == 1 else None)
+        self._setup_global_scroll()
+
+    # ------------------------------------------------------------------
+    # Global scroll helper
+    # ------------------------------------------------------------------
+
+    def _setup_global_scroll(self):
+        """
+        One bind_all that catches <MouseWheel> and arrow keys from ANY widget.
+        Walks up the widget tree to find the nearest scrollable tk.Canvas and
+        scrolls it — so the wheel works even when the cursor is over a Button,
+        Label, Entry, etc. inside the canvas.
+        """
+        def _find_canvas(widget):
+            w = widget
+            while w is not None:
+                if isinstance(w, tk.Canvas):
+                    try:
+                        if w.cget('yscrollcommand'):
+                            return w
+                    except tk.TclError:
+                        pass
+                try:
+                    w = w.master
+                except Exception:
+                    break
+            return None
+
+        def _on_wheel(event):
+            canvas = _find_canvas(event.widget)
+            if canvas:
+                canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _on_arrow(event):
+            wclass = event.widget.winfo_class()
+            if wclass in ('Entry', 'TEntry', 'Spinbox', 'TSpinbox',
+                          'Text', 'TCombobox', 'ScrolledText'):
+                return
+            canvas = _find_canvas(event.widget)
+            if canvas:
+                delta = -1 if event.keysym in ('Up', 'Prior') else 1
+                units = "pages" if event.keysym in ('Prior', 'Next') else "units"
+                canvas.yview_scroll(delta, units)
+
+        self.bind_all("<MouseWheel>", _on_wheel)
+        self.bind_all("<Up>",   _on_arrow)
+        self.bind_all("<Down>", _on_arrow)
+        self.bind_all("<Prior>", _on_arrow)
+        self.bind_all("<Next>",  _on_arrow)
+
+    # ------------------------------------------------------------------
+    # Clustering tab  (Files + Method + Output réunis)
+    # ------------------------------------------------------------------
+
+    def _build_tab_clustering(self, parent):
+        px  = THEME["pad_x"]
+        pad = {"padx": px, "pady": THEME["pad_y"]}
+
+        canvas = tk.Canvas(parent, bg=THEME["bg"], highlightthickness=0)
+        sb     = ttk.Scrollbar(parent, orient='vertical', command=canvas.yview)
+        inner  = ttk.Frame(canvas)
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        win = canvas.create_window((0, 0), window=inner, anchor='nw')
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side='left', fill='both', expand=True)
+        sb.pack(side='right', fill='y')
+
+        # ── Section : Fichiers ────────────────────────────────────────
+        ttk.Label(inner, text=t("csv_section"),
+                  style="Section.TLabel").pack(anchor='w', **pad)
+
+        f1 = ttk.Frame(inner)
+        f1.pack(fill='x', padx=px)
+        self.lbl_csv = ttk.Label(f1, text=t("no_file"), style="Sub.TLabel")
+        self.lbl_csv.pack(side='left', fill='x', expand=True)
+        ttk.Button(f1, text=t("browse"), style="Secondary.TButton",
+                   command=self._select_csv).pack(side='right')
+
+        self.lst_csv = tk.Listbox(
+            inner, height=5,
+            font=THEME["font_log"],
+            bg=THEME["bg_input"], fg=THEME["text"],
+            selectbackground=THEME["accent"], selectforeground="#FFFFFF",
+            relief="flat", borderwidth=0,
+            highlightthickness=1, highlightbackground=THEME["separator"],
+            activestyle="none")
+        self.lst_csv.pack(fill='x', padx=px, pady=(4, 6))
+
+        ttk.Label(inner, text=t("nifti_section"),
+                  style="Section.TLabel").pack(anchor='w', **pad)
+        f2 = ttk.Frame(inner)
+        f2.pack(fill='x', padx=px)
+        ttk.Entry(f2, textvariable=self.nifti_path,
+                  state='readonly').pack(side='left', fill='x', expand=True)
+        ttk.Button(f2, text=t("browse"), style="Secondary.TButton",
+                   command=self._select_nifti).pack(side='right', padx=(6, 0))
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=10)
+
+        # ── Section : Méthode ─────────────────────────────────────────
+        ttk.Label(inner, text=t("method_section"),
+                  style="Section.TLabel").pack(anchor='w', **pad)
+
+        for val, desc_key in [
+            ("gmm",    "gmm_desc"),
+            ("srsc",   "srsc_desc"),
+            ("kmeans", "kmeans_desc"),
+        ]:
+            f = ttk.Frame(inner)
+            f.pack(fill='x', padx=px, pady=2)
+            ttk.Radiobutton(f, text=t(desc_key),
+                            variable=self.method, value=val).pack(side='left', anchor='w')
+            ttk.Button(f, text="?", width=2, style="Secondary.TButton",
+                       command=lambda v=val: _show_method_help(v)
+                       ).pack(side='left', padx=(8, 0))
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=8)
+        ttk.Label(inner, text=t("common_params"),
+                  style="Sub.TLabel").pack(anchor='w', padx=px)
+
+        def row(label, widget_fn):
+            f = ttk.Frame(inner)
+            f.pack(fill='x', padx=px, pady=4)
+            ttk.Label(f, text=label, width=30).pack(side='left')
+            widget_fn(f)
+
+        row(t("k_min"),
+            lambda f: ttk.Spinbox(f, from_=2, to=10,
+                                   textvariable=self.k_min, width=6).pack(side='left'))
+        row(t("k_max"),
+            lambda f: ttk.Spinbox(f, from_=3, to=15,
+                                   textvariable=self.k_max, width=6).pack(side='left'))
+        row(t("k_override"),
+            lambda f: ttk.Entry(f, textvariable=self.k_override, width=6).pack(side='left'))
+
+        self._frame_srsc = ttk.Frame(inner)
+        ttk.Label(self._frame_srsc, text=t("srsc_params"),
+                  style="Sub.TLabel").pack(anchor='w', padx=px)
+        sf = ttk.Frame(self._frame_srsc)
+        sf.pack(fill='x', padx=px, pady=4)
+        ttk.Label(sf, text=t("spatial_weight"), width=30).pack(side='left')
+        self.lbl_sw = ttk.Label(sf, text=f"{SPATIAL_WEIGHT:.2f}", width=5)
+        ttk.Scale(sf, from_=0.0, to=1.0, variable=self.spatial_w,
+                  orient='horizontal', length=160,
+                  command=lambda v: self.lbl_sw.config(
+                      text=f"{float(v):.2f}")).pack(side='left')
+        self.lbl_sw.pack(side='left')
+        f_sig = ttk.Frame(self._frame_srsc)
+        f_sig.pack(fill='x', padx=px, pady=2)
+        ttk.Label(f_sig, text=t("sigma_feature"), width=30).pack(side='left')
+        self.lbl_sigma = ttk.Label(f_sig, text="—", style="Sub.TLabel")
+        self.lbl_sigma.pack(side='left')
+
+        self._frame_gmm = ttk.Frame(inner)
+        ttk.Label(self._frame_gmm, text=t("gmm_params"),
+                  style="Sub.TLabel").pack(anchor='w', padx=px)
+        f_init = ttk.Frame(self._frame_gmm)
+        f_init.pack(fill='x', padx=px, pady=4)
+        ttk.Label(f_init, text=t("n_init_gmm"), width=30).pack(side='left')
+        ttk.Spinbox(f_init, from_=1, to=50, textvariable=self.n_init_gmm,
+                    width=6).pack(side='left')
+        f_guard_gmm = ttk.Frame(self._frame_gmm)
+        f_guard_gmm.pack(fill='x', padx=px, pady=2)
+        ttk.Checkbutton(f_guard_gmm,
+                        text=t("gmm_guard", thr=GMM_SILHOUETTE_GUARD),
+                        variable=self.gmm_guard).pack(anchor='w')
+
+        self._frame_nrefs = ttk.Frame(inner)
+        f_nr = ttk.Frame(self._frame_nrefs)
+        f_nr.pack(fill='x', padx=px)
+        ttk.Label(f_nr, text=t("n_refs"), width=30).pack(side='left')
+        ttk.Spinbox(f_nr, from_=5, to=200, textvariable=self.n_refs,
+                    width=6).pack(side='left')
+
+        self._frame_kmeans_guard = ttk.Frame(inner)
+        ttk.Checkbutton(self._frame_kmeans_guard,
+                        text=t("kmeans_guard"),
+                        variable=self.kmeans_guard).pack(anchor='w', padx=px + 4)
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=8)
+        ttk.Label(inner, text=t("spatial_options"),
+                  style="Sub.TLabel").pack(anchor='w', padx=px, pady=(0, 4))
+        ttk.Checkbutton(inner, text=t("hierarchical_opt"),
+                        variable=self.hierarchical_enabled,
+                        ).pack(anchor='w', padx=px + 4, pady=2)
+        ttk.Checkbutton(inner,
+                        text=t("mrf_opt") + f"  (λ={MRF_LAMBDA}, thr={MRF_CONFIDENCE_THR})",
+                        variable=self.mrf_enabled,
+                        ).pack(anchor='w', padx=px + 4, pady=2)
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=10)
+
+        # ── Section : Output ──────────────────────────────────────────
+        ttk.Label(inner, text=t("output_folder"),
+                  style="Section.TLabel").pack(anchor='w', **pad)
+        ttk.Entry(inner, textvariable=self.output_name,
+                  width=20).pack(anchor='w', padx=px)
+        ttk.Label(inner, text=t("output_folder_hint"),
+                  style="Sub.TLabel").pack(anchor='w', padx=px, pady=(2, 0))
+
+        ttk.Label(inner, text=t("output_dir"),
+                  style="Section.TLabel").pack(anchor='w', **pad)
+        f_out = ttk.Frame(inner)
+        f_out.pack(fill='x', padx=px)
+        ttk.Entry(f_out, textvariable=self.output_dir,
+                  state='readonly').pack(side='left', fill='x', expand=True)
+        ttk.Button(f_out, text=t("browse"), style="Secondary.TButton",
+                   command=self._select_output_dir).pack(side='right', padx=(6, 0))
+        ttk.Label(inner, text=t("output_dir_hint"),
+                  style="Sub.TLabel").pack(anchor='w', padx=px, pady=(4, 12))
 
     # ------------------------------------------------------------------
     # Comparative Analysis tab
@@ -1290,6 +1620,14 @@ class HabitatApp(tk.Tk):
                 elif action == "cmp_results":
                     self._show_comparative_results(task["summary"], task["pdf_path"])
 
+                elif action == "atl_done":
+                    if self.btn_atl_run:
+                        self.btn_atl_run.config(state='normal',
+                                                text="▶  Run Atlas Comparison")
+
+                elif action == "atl_results":
+                    self._show_atlas_results(task["summary"], task["pdf_path"])
+
                 elif action == "error":
                     self._write_log(task["text"], tag="err")
                     self.btn_run.config(state='normal', text=t("run_analysis"))
@@ -1360,6 +1698,7 @@ class HabitatApp(tk.Tk):
         sub.add(im_tab, text=t("tab_im"))
         self._build_ia_panel(ia_tab)
         self._build_im_panel(im_tab)
+        self._comp_sub = sub
 
     # --- Inter-animal panel ---
 
@@ -2121,6 +2460,480 @@ class HabitatApp(tk.Tk):
                    ).pack(side='left', padx=8)
 
     # ------------------------------------------------------------------
+    # Atlas tab
+    # ------------------------------------------------------------------
+
+    def _build_tab_atlas(self, parent):
+        px  = THEME["pad_x"]
+        pad = {"padx": px, "pady": THEME["pad_y"]}
+
+        canvas = tk.Canvas(parent, bg=THEME["bg"], highlightthickness=0)
+        sb     = ttk.Scrollbar(parent, orient='vertical', command=canvas.yview)
+        inner  = ttk.Frame(canvas)
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        win = canvas.create_window((0, 0), window=inner, anchor='nw')
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(win, width=e.width))
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side='left', fill='both', expand=True)
+        sb.pack(side='right', fill='y')
+        canvas.bind("<MouseWheel>",
+                    lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
+
+        ttk.Label(inner,
+                  text="Atlas  —  Inter-Animal Habitat Comparison",
+                  style="Section.TLabel").pack(anchor='w', **pad)
+        ttk.Label(inner,
+                  text="Fits a single weighted GMM atlas (1/n_i per voxel) on the pooled "
+                       "cohort, then freezes it. Each mouse becomes a compositional vector "
+                       "π ∈ Δ^(K−1). Groups are compared via PERMANOVA, MMD, and Dirichlet "
+                       "regression. A multi-page PDF report is generated.",
+                  style="Sub.TLabel",
+                  wraplength=520).pack(anchor='w', padx=px, pady=(0, 10))
+
+        # ── Group names ──────────────────────────────────────────────────────
+        ttk.Label(inner, text="Group names",
+                  style="Section.TLabel").pack(anchor='w', **pad)
+        ttk.Label(inner,
+                  text="Each mouse card below is assigned to a group (0, 1, …).",
+                  style="Sub.TLabel").pack(anchor='w', padx=px, pady=(0, 4))
+
+        gnames_frame = ttk.Frame(inner, style="Card.TFrame")
+        gnames_frame.pack(fill='x', padx=px, pady=(0, 4))
+        self._atl_gnames_frame = gnames_frame
+        self._atl_refresh_group_names(gnames_frame)
+
+        btn_row_g = ttk.Frame(inner)
+        btn_row_g.pack(anchor='w', padx=px, pady=(0, 8))
+        ttk.Button(btn_row_g, text="+ Add group", style="Secondary.TButton",
+                   command=self._atl_add_group).pack(side='left', padx=(0, 4))
+        ttk.Button(btn_row_g, text="– Remove last group", style="Secondary.TButton",
+                   command=self._atl_remove_group).pack(side='left')
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
+
+        # ── Covariables ──────────────────────────────────────────────────────
+        ttk.Label(inner, text="Covariables  (optionnel — Dirichlet regression)",
+                  style="Section.TLabel").pack(anchor='w', **pad)
+        ttk.Label(inner,
+                  text="Définissez des covariables (sexe, date, régime…). "
+                       "Chaque souris aura un champ par covariable dans sa carte. "
+                       "Valeurs numériques : utilisées telles quelles. "
+                       "Dates (YYYY-MM-DD) : converties en jours depuis la plus ancienne. "
+                       "Texte (M/F, normal/gras…) : encodé en dummy 0/1.",
+                  style="Sub.TLabel", wraplength=520).pack(anchor='w', padx=px, pady=(0, 4))
+
+        covar_frame = ttk.Frame(inner, style="Card.TFrame")
+        covar_frame.pack(fill='x', padx=px, pady=(0, 4))
+        self._atl_covar_frame = covar_frame
+        self._atl_refresh_covar_names(covar_frame)
+
+        btn_row_cov = ttk.Frame(inner)
+        btn_row_cov.pack(anchor='w', padx=px, pady=(0, 8))
+        ttk.Button(btn_row_cov, text="+ Ajouter covariable", style="Secondary.TButton",
+                   command=self._atl_add_covar).pack(side='left', padx=(0, 4))
+        ttk.Button(btn_row_cov, text="– Supprimer dernière", style="Secondary.TButton",
+                   command=self._atl_remove_covar).pack(side='left')
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
+
+        # ── Mouse list ───────────────────────────────────────────────────────
+        ttk.Label(inner, text="Mice  (CSV files + group assignment)",
+                  style="Section.TLabel").pack(anchor='w', **pad)
+
+        list_frame = ttk.Frame(inner, style="Card.TFrame")
+        list_frame.pack(fill='x', padx=px, pady=(0, 4))
+        self._atl_list_inner = list_frame
+
+        if not self._atl_animals:
+            self._atl_add_mouse()
+            self._atl_add_mouse()
+        else:
+            self._atl_refresh_list()
+
+        ttk.Button(inner, text=t("add_mouse"), style="Secondary.TButton",
+                   command=self._atl_add_mouse).pack(anchor='w', padx=px, pady=(0, 8))
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
+
+        # ── Normalization ────────────────────────────────────────────────────
+        ttk.Label(inner, text="Normalization",
+                  style="Section.TLabel").pack(anchor='w', **pad)
+        ttk.Radiobutton(inner,
+                        text="Global robust  (recommended for inter-group comparison)",
+                        variable=self._atl_normalization,
+                        value='robust_global').pack(anchor='w', padx=px + 4, pady=1)
+        ttk.Radiobutton(inner,
+                        text="Per-mouse robust  (removes inter-mouse differences)",
+                        variable=self._atl_normalization,
+                        value='robust').pack(anchor='w', padx=px + 4, pady=1)
+        ttk.Radiobutton(inner,
+                        text="CL normalization  (requires contralateral ROI)",
+                        variable=self._atl_normalization,
+                        value='cl').pack(anchor='w', padx=px + 4, pady=(1, 6))
+        ttk.Label(inner,
+                  text="Global robust : un seul scaler sur tous les voxels poolés — "
+                       "préserve les différences biologiques entre groupes.",
+                  style="Sub.TLabel", wraplength=500).pack(anchor='w', padx=px + 4, pady=(0, 6))
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
+
+        # ── Atlas / K parameters ─────────────────────────────────────────────
+        ttk.Label(inner, text="Atlas parameters",
+                  style="Section.TLabel").pack(anchor='w', **pad)
+
+        def arow(label, widget_fn):
+            f = ttk.Frame(inner)
+            f.pack(fill='x', padx=px, pady=3)
+            ttk.Label(f, text=label, width=34).pack(side='left')
+            widget_fn(f)
+
+        arow("K min (BIC selection)",
+             lambda f: ttk.Spinbox(f, from_=2, to=10,
+                                    textvariable=self._atl_k_min,
+                                    width=6).pack(side='left'))
+        arow("K max (BIC selection)",
+             lambda f: ttk.Spinbox(f, from_=3, to=15,
+                                    textvariable=self._atl_k_max,
+                                    width=6).pack(side='left'))
+        arow("K override  (blank = auto BIC)",
+             lambda f: ttk.Entry(f, textvariable=self._atl_k_override,
+                                  width=6).pack(side='left'))
+        arow("GMM restarts (n_init)",
+             lambda f: ttk.Spinbox(f, from_=1, to=100,
+                                    textvariable=self._atl_n_init,
+                                    width=6).pack(side='left'))
+        arow("Bootstrap runs (stability check)",
+             lambda f: ttk.Spinbox(f, from_=0, to=200,
+                                    textvariable=self._atl_n_bootstrap,
+                                    width=6).pack(side='left'))
+        arow("Permutations (PERMANOVA / PERMDISP)",
+             lambda f: ttk.Spinbox(f, from_=99, to=9999,
+                                    textvariable=self._atl_n_perm,
+                                    width=7).pack(side='left'))
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
+
+        # ── Output ───────────────────────────────────────────────────────────
+        ttk.Label(inner, text=t("output_section"),
+                  style="Section.TLabel").pack(anchor='w', **pad)
+
+        f_name = ttk.Frame(inner)
+        f_name.pack(fill='x', padx=px, pady=3)
+        ttk.Label(f_name, text="Output folder name", width=34).pack(side='left')
+        ttk.Entry(f_name, textvariable=self._atl_output_name,
+                  width=22).pack(side='left')
+
+        f_dir = ttk.Frame(inner)
+        f_dir.pack(fill='x', padx=px, pady=3)
+        ttk.Entry(f_dir, textvariable=self._atl_output_dir,
+                  state='readonly').pack(side='left', fill='x', expand=True)
+        ttk.Button(f_dir, text=t("browse"), style="Secondary.TButton",
+                   command=self._atl_select_output).pack(side='right', padx=(6, 0))
+        ttk.Label(inner,
+                  text="(defaults to first mouse's parent folder)",
+                  style="Sub.TLabel").pack(anchor='w', padx=px, pady=(2, 0))
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=8)
+
+    # ── Atlas group helpers ───────────────────────────────────────────────────
+
+    def _atl_refresh_group_names(self, frame=None):
+        if frame is None:
+            frame = getattr(self, '_atl_gnames_frame', None)
+        if frame is None:
+            return
+        for w in frame.winfo_children():
+            w.destroy()
+        for gi, gvar in enumerate(self._atl_group_names):
+            row = ttk.Frame(frame)
+            row.pack(fill='x', padx=4, pady=2)
+            ttk.Label(row, text=f"Group {gi} :", width=10).pack(side='left', padx=(4, 2))
+            ttk.Entry(row, textvariable=gvar, width=18).pack(side='left', padx=4)
+
+    def _atl_add_group(self):
+        if len(self._atl_group_names) >= 8:
+            return
+        self._atl_group_names.append(tk.StringVar(value=f"Group {len(self._atl_group_names)}"))
+        self._atl_refresh_group_names()
+
+    def _atl_remove_group(self):
+        if len(self._atl_group_names) <= 2:
+            return
+        removed = len(self._atl_group_names) - 1
+        self._atl_group_names.pop()
+        for a in self._atl_animals:
+            if a["group_var"].get() >= removed:
+                a["group_var"].set(removed - 1)
+        self._atl_refresh_group_names()
+        self._atl_refresh_list()
+
+    # ── Atlas covariable helpers ──────────────────────────────────────────────
+
+    def _atl_refresh_covar_names(self, frame=None):
+        if frame is None:
+            frame = getattr(self, '_atl_covar_frame', None)
+        if frame is None:
+            return
+        for w in frame.winfo_children():
+            w.destroy()
+        if not self._atl_covar_names:
+            ttk.Label(frame, text="  (aucune covariable définie)",
+                      style="Sub.TLabel").pack(anchor='w', padx=6, pady=4)
+            return
+        for j, cvar in enumerate(self._atl_covar_names):
+            row = ttk.Frame(frame)
+            row.pack(fill='x', padx=4, pady=2)
+            ttk.Label(row, text=f"Cov {j + 1} :", width=8).pack(side='left', padx=(4, 2))
+            ttk.Entry(row, textvariable=cvar, width=20).pack(side='left', padx=4)
+
+    def _atl_add_covar(self):
+        if len(self._atl_covar_names) >= 8:
+            return
+        default_names = ["Sexe", "Date_injection", "Diet",
+                         "Cov4", "Cov5", "Cov6", "Cov7", "Cov8"]
+        self._atl_covar_names.append(
+            tk.StringVar(value=default_names[len(self._atl_covar_names)]))
+        # Add an empty entry to every existing mouse
+        for a in self._atl_animals:
+            a.setdefault("covar_vars", []).append(tk.StringVar(value=""))
+        self._atl_refresh_covar_names()
+        self._atl_refresh_list()
+
+    def _atl_remove_covar(self):
+        if not self._atl_covar_names:
+            return
+        self._atl_covar_names.pop()
+        for a in self._atl_animals:
+            cvars = a.get("covar_vars", [])
+            if cvars:
+                cvars.pop()
+        self._atl_refresh_covar_names()
+        self._atl_refresh_list()
+
+    # ── Atlas mouse card helpers ──────────────────────────────────────────────
+
+    def _atl_add_mouse(self):
+        n = len(self._atl_covar_names)
+        self._atl_animals.append({
+            "files"     : [],
+            "group_var" : tk.IntVar(value=0),
+            "covar_vars": [tk.StringVar(value="") for _ in range(n)],
+        })
+        self._atl_refresh_list()
+
+    def _atl_remove_mouse(self, idx):
+        if len(self._atl_animals) <= 1:
+            return
+        self._atl_animals.pop(idx)
+        self._atl_refresh_list()
+
+    def _atl_refresh_list(self):
+        if self._atl_list_inner is None:
+            return
+        for w in self._atl_list_inner.winfo_children():
+            w.destroy()
+        for i, animal in enumerate(self._atl_animals):
+            self._atl_build_card(i, animal)
+
+    def _atl_build_card(self, i, animal):
+        card = ttk.Frame(self._atl_list_inner, style="Card.TFrame")
+        card.pack(fill='x', padx=4, pady=3)
+
+        # ── Ligne 1 : identité, fichiers, groupe, suppression ────────────
+        row1 = ttk.Frame(card)
+        row1.pack(fill='x', padx=4, pady=(4, 1))
+
+        ttk.Label(row1, text=t("mouse_n", n=i + 1),
+                  font=THEME["font_bold"], width=9).pack(side='left', padx=(4, 2))
+
+        n   = len(animal["files"])
+        lbl = ttk.Label(row1,
+                        text=t("n_files", n=n) if n else t("no_files"),
+                        style="Sub.TLabel", width=12)
+        lbl.pack(side='left', padx=6)
+        animal["_lbl"] = lbl
+
+        ttk.Button(row1, text=t("browse"), style="Secondary.TButton",
+                   command=lambda a=animal: self._atl_browse(a)
+                   ).pack(side='left', padx=2)
+
+        ttk.Label(row1, text="Group:", style="Sub.TLabel").pack(side='left', padx=(10, 2))
+        n_groups = len(self._atl_group_names)
+        ttk.Spinbox(row1, from_=0, to=max(n_groups - 1, 1),
+                    textvariable=animal["group_var"],
+                    width=4).pack(side='left', padx=2)
+
+        ttk.Button(row1, text="✕", style="Secondary.TButton", width=2,
+                   state='normal' if len(self._atl_animals) > 1 else 'disabled',
+                   command=lambda idx=i: self._atl_remove_mouse(idx)
+                   ).pack(side='right', padx=4)
+
+        # ── Ligne 2 : covariables (si définies) ──────────────────────────
+        cvars = animal.setdefault("covar_vars", [])
+        while len(cvars) < len(self._atl_covar_names):
+            cvars.append(tk.StringVar(value=""))
+
+        if self._atl_covar_names:
+            row2 = ttk.Frame(card)
+            row2.pack(fill='x', padx=4, pady=(0, 4))
+            ttk.Label(row2, text=" ", width=9).pack(side='left')  # indentation
+            for j, cname_var in enumerate(self._atl_covar_names):
+                lbl_txt = cname_var.get() or f"Cov{j + 1}"
+                ttk.Label(row2, text=f"{lbl_txt}:",
+                          style="Sub.TLabel").pack(side='left', padx=(10, 1))
+                ttk.Entry(row2, textvariable=cvars[j],
+                          width=10).pack(side='left', padx=(0, 4))
+
+    def _atl_browse(self, animal):
+        files = filedialog.askopenfilenames(
+            title=t("dlg_select_csv_mouse"),
+            filetypes=[("CSV files", "*.csv")])
+        if files:
+            animal["files"] = list(files)
+            if animal.get("_lbl"):
+                animal["_lbl"].config(
+                    text=t("n_files", n=len(files)),
+                    foreground=THEME["text"])
+
+    def _atl_select_output(self):
+        path = filedialog.askdirectory(title=t("dlg_select_output"))
+        if path:
+            self._atl_output_dir.set(path)
+
+    # ── Atlas run ─────────────────────────────────────────────────────────────
+
+    def _run_atlas(self):
+        mice_data, group_labels, covar_rows = [], [], []
+        for animal in self._atl_animals:
+            if not animal["files"]:
+                continue
+            name = os.path.basename(os.path.dirname(animal["files"][0]))
+            mice_data.append({"name": name, "files": list(animal["files"])})
+            group_labels.append(animal["group_var"].get())
+            covar_rows.append([v.get().strip()
+                               for v in animal.get("covar_vars", [])])
+
+        if len(mice_data) < 2:
+            messagebox.showerror(t("err_title"),
+                                 "Select CSV files for at least 2 mice.")
+            return
+
+        if len(set(group_labels)) < 2:
+            messagebox.showerror(t("err_title"),
+                                 "Assign mice to at least 2 different groups.")
+            return
+
+        out_dir = self._atl_output_dir.get()
+        if not out_dir:
+            out_dir = os.path.dirname(os.path.dirname(mice_data[0]["files"][0]))
+        out_dir = os.path.join(out_dir, self._atl_output_name.get() or "atlas_comparison")
+
+        k_ov_str = self._atl_k_override.get().strip()
+        k_ov     = int(k_ov_str) if k_ov_str.isdigit() else None
+
+        group_names  = {gi: gv.get() for gi, gv in enumerate(self._atl_group_names)}
+        covar_names  = [v.get().strip() for v in self._atl_covar_names]
+
+        params = {
+            "mice_data"    : mice_data,
+            "group_labels" : group_labels,
+            "group_names"  : group_names,
+            "covar_names"  : covar_names,
+            "covar_rows"   : covar_rows,
+            "k_range"      : range(self._atl_k_min.get(), self._atl_k_max.get() + 1),
+            "k_override"   : k_ov,
+            "normalization": self._atl_normalization.get(),
+            "n_init"       : self._atl_n_init.get(),
+            "n_bootstrap"  : self._atl_n_bootstrap.get(),
+            "n_perm"       : self._atl_n_perm.get(),
+            "out_dir"      : out_dir,
+        }
+
+        self.btn_atl_run.config(state='disabled', text=t("running"))
+        self._write_log(f"[Atlas] Starting — {len(mice_data)} mice, "
+                        f"{len(set(group_labels))} groups")
+        threading.Thread(target=self._run_atlas_pipeline,
+                         args=(params,), daemon=True).start()
+
+    def _run_atlas_pipeline(self, p):
+        from atlas_pipeline import run_atlas_pipeline
+
+        def log(msg, tag=None):
+            self.queue.put({"type": "log", "text": f"[Atlas] {msg}", "tag": tag})
+
+        try:
+            covariates = _parse_atlas_covariates(
+                p.get("covar_names", []),
+                p.get("covar_rows",  []),
+                log)
+            result = run_atlas_pipeline(
+                mice_data      = p["mice_data"],
+                group_labels   = p["group_labels"],
+                group_names    = p["group_names"],
+                k_range        = p["k_range"],
+                k_override     = p["k_override"],
+                normalization  = p["normalization"],
+                n_init         = p["n_init"],
+                n_bootstrap    = p["n_bootstrap"],
+                n_perm         = p["n_perm"],
+                out_dir        = p["out_dir"],
+                covariates     = covariates,
+                covar_names    = p.get("covar_names", []),
+                log            = log,
+            )
+            k     = result["atlas"].k
+            pa    = result["permanova_aitch"]
+            pm    = result["permanova_mmd"]
+            dr    = result["dirichlet"]
+            summary = (
+                f"{result['n_mice'] if 'n_mice' in result else len(result['mouse_names'])} mice  |  "
+                f"K={k}  |  "
+                f"PERMANOVA-π  F={pa['F']:.2f} p={pa['p_value']:.3f}  |  "
+                f"MMD  F={pm['F']:.2f} p={pm['p_value']:.3f}  |  "
+                f"Dirichlet p={dr['p_value']:.3f}"
+            )
+            self.queue.put({
+                "type"    : "atl_results",
+                "pdf_path": result["pdf_path"],
+                "summary" : summary,
+            })
+        except Exception as e:
+            log(f"Error: {e}", "err")
+            self.queue.put({"type": "log",
+                            "text": f"[Atlas] {traceback.format_exc()}", "tag": "err"})
+        finally:
+            self.queue.put({"type": "atl_done"})
+
+    def _show_atlas_results(self, summary, pdf_path):
+        win = tk.Toplevel(self)
+        win.title("Atlas Comparison — Done")
+        win.configure(bg=THEME["bg"])
+        win.geometry("580x220")
+
+        ttk.Label(win, text="Atlas comparison complete",
+                  style="Section.TLabel").pack(pady=(18, 4))
+        ttk.Label(win, text=summary,
+                  style="Sub.TLabel", wraplength=540).pack(pady=4)
+        ttk.Label(win, text=pdf_path,
+                  style="Sub.TLabel", wraplength=540).pack(pady=4)
+
+        btn_row = ttk.Frame(win)
+        btn_row.pack(pady=12)
+        ttk.Button(btn_row, text="Open PDF",
+                   style="Primary.TButton",
+                   command=lambda: os.startfile(pdf_path)
+                   ).pack(side='left', padx=8)
+        ttk.Button(btn_row, text="Open folder",
+                   style="Secondary.TButton",
+                   command=lambda: os.startfile(os.path.dirname(pdf_path))
+                   ).pack(side='left', padx=8)
+        ttk.Button(btn_row, text="Close",
+                   style="Secondary.TButton",
+                   command=win.destroy
+                   ).pack(side='left', padx=8)
+
+    # ------------------------------------------------------------------
     # Validation and launch
     # ------------------------------------------------------------------
 
@@ -2490,12 +3303,55 @@ class HabitatApp(tk.Tk):
         ttk.Button(f_dir, text=t("browse"), style="Secondary.TButton",
                    command=self._disc_select_output).pack(side='right', padx=(6, 0))
 
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
+
+        # ── Section : Comparaison de groupes ──────────────────────────
+        ttk.Label(inner, text="Comparaison de groupes  (optionnel)",
+                  style="Section.TLabel").pack(anchor='w', **pad)
+        ttk.Label(inner,
+                  text="Activez pour assigner chaque souris à un groupe. "
+                       "Après le clustering, les proportions d'habitats (π) "
+                       "sont comparées entre groupes via Mann-Whitney.",
+                  style="Sub.TLabel", wraplength=510).pack(anchor='w', padx=px, pady=(0, 4))
+        ttk.Checkbutton(inner,
+                        text="Activer la comparaison de groupes",
+                        variable=self._disc_compare_enabled,
+                        command=self._disc_toggle_compare
+                        ).pack(anchor='w', padx=px + 4, pady=(0, 4))
+
+        disc_gf = ttk.Frame(inner, style="Card.TFrame")
+        disc_gf.pack(fill='x', padx=px, pady=(0, 8))
+        self._disc_gnames_frame = disc_gf
+        self._disc_refresh_gnames()
+
         ttk.Separator(inner).pack(fill='x', padx=px, pady=8)
+
+    # ── Group compare helpers (Discovery) ─────────────────────────────
+
+    def _disc_toggle_compare(self):
+        self._disc_refresh_gnames()
+        self._disc_refresh_list()
+
+    def _disc_refresh_gnames(self):
+        f = self._disc_gnames_frame
+        if f is None:
+            return
+        for w in f.winfo_children():
+            w.destroy()
+        if not self._disc_compare_enabled.get():
+            ttk.Label(f, text="  (comparaison désactivée)",
+                      style="Sub.TLabel").pack(anchor='w', padx=6, pady=4)
+            return
+        for gi, gvar in enumerate(self._disc_group_names):
+            row = ttk.Frame(f)
+            row.pack(fill='x', padx=4, pady=2)
+            ttk.Label(row, text=f"Groupe {gi} :", width=10).pack(side='left', padx=(4, 2))
+            ttk.Entry(row, textvariable=gvar, width=18).pack(side='left', padx=4)
 
     # ── Animal card helpers ───────────────────────────────────────────
 
     def _disc_add_mouse(self):
-        self._disc_animals.append({"files": []})
+        self._disc_animals.append({"files": [], "group_var": tk.IntVar(value=0)})
         self._disc_refresh_list()
 
     def _disc_remove_mouse(self, idx):
@@ -2529,6 +3385,13 @@ class HabitatApp(tk.Tk):
         ttk.Button(card, text=t("browse"), style="Secondary.TButton",
                    command=lambda a=animal: self._disc_browse(a)
                    ).pack(side='left', padx=2)
+
+        if self._disc_compare_enabled.get():
+            ttk.Label(card, text="Groupe:", style="Sub.TLabel").pack(side='left', padx=(10, 2))
+            gvar = animal.setdefault("group_var", tk.IntVar(value=0))
+            ttk.Spinbox(card, from_=0, to=max(len(self._disc_group_names) - 1, 1),
+                        textvariable=gvar, width=4).pack(side='left', padx=2)
+
         ttk.Button(card, text="✕", style="Secondary.TButton", width=2,
                    state='normal' if len(self._disc_animals) > 1 else 'disabled',
                    command=lambda idx=i: self._disc_remove_mouse(idx)
@@ -3142,12 +4005,55 @@ class HabitatApp(tk.Tk):
         ttk.Button(f_dir, text=t("browse"), style="Secondary.TButton",
                    command=self._jt_select_output).pack(side='right', padx=(6, 0))
 
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
+
+        # ── Section : Comparaison de groupes ──────────────────────────
+        ttk.Label(inner, text="Comparaison de groupes  (optionnel)",
+                  style="Section.TLabel").pack(anchor='w', **pad)
+        ttk.Label(inner,
+                  text="Activez pour assigner chaque souris à un groupe. "
+                       "Après le clustering joint, les proportions d'habitats (π) "
+                       "sont comparées entre groupes via Mann-Whitney.",
+                  style="Sub.TLabel", wraplength=510).pack(anchor='w', padx=px, pady=(0, 4))
+        ttk.Checkbutton(inner,
+                        text="Activer la comparaison de groupes",
+                        variable=self._jt_compare_enabled,
+                        command=self._jt_toggle_compare
+                        ).pack(anchor='w', padx=px + 4, pady=(0, 4))
+
+        jt_gf = ttk.Frame(inner, style="Card.TFrame")
+        jt_gf.pack(fill='x', padx=px, pady=(0, 8))
+        self._jt_gnames_frame = jt_gf
+        self._jt_refresh_gnames()
+
         ttk.Separator(inner).pack(fill='x', padx=px, pady=8)
+
+    # ── Group compare helpers (Joint) ─────────────────────────────────
+
+    def _jt_toggle_compare(self):
+        self._jt_refresh_gnames()
+        self._jt_refresh_list()
+
+    def _jt_refresh_gnames(self):
+        f = self._jt_gnames_frame
+        if f is None:
+            return
+        for w in f.winfo_children():
+            w.destroy()
+        if not self._jt_compare_enabled.get():
+            ttk.Label(f, text="  (comparaison désactivée)",
+                      style="Sub.TLabel").pack(anchor='w', padx=6, pady=4)
+            return
+        for gi, gvar in enumerate(self._jt_group_names):
+            row = ttk.Frame(f)
+            row.pack(fill='x', padx=4, pady=2)
+            ttk.Label(row, text=f"Groupe {gi} :", width=10).pack(side='left', padx=(4, 2))
+            ttk.Entry(row, textvariable=gvar, width=18).pack(side='left', padx=4)
 
     # ── Animal card helpers ──────────────────────────────────────────
 
     def _jt_add_mouse(self):
-        self._jt_animals.append({"files": []})
+        self._jt_animals.append({"files": [], "group_var": tk.IntVar(value=0)})
         self._jt_refresh_list()
 
     def _jt_remove_mouse(self, idx):
@@ -3181,6 +4087,13 @@ class HabitatApp(tk.Tk):
         ttk.Button(card, text=t("browse"), style="Secondary.TButton",
                    command=lambda a=animal: self._jt_browse(a)
                    ).pack(side='left', padx=2)
+
+        if self._jt_compare_enabled.get():
+            ttk.Label(card, text="Groupe:", style="Sub.TLabel").pack(side='left', padx=(10, 2))
+            gvar = animal.setdefault("group_var", tk.IntVar(value=0))
+            ttk.Spinbox(card, from_=0, to=max(len(self._jt_group_names) - 1, 1),
+                        textvariable=gvar, width=4).pack(side='left', padx=2)
+
         ttk.Button(card, text="✕", style="Secondary.TButton", width=2,
                    state='normal' if len(self._jt_animals) > 1 else 'disabled',
                    command=lambda idx=i: self._jt_remove_mouse(idx)
