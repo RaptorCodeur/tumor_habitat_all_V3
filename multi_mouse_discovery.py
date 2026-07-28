@@ -151,6 +151,14 @@ def load_mouse_data(csv_path: str) -> dict | None:
     if not param_cols:
         return None
 
+    # Apply the same DTI resolution as resolve_dti_parameters in loading.py:
+    # DTI-MD is a linear combination of AD+RD and biases distances when redundant.
+    # Drop it when both AD and RD are present, whether the value is real or virtual.
+    _has_ad = 'DTI-AD' in param_cols
+    _has_rd = 'DTI-RD' in param_cols
+    if _has_ad and _has_rd and 'DTI-MD' in param_cols:
+        param_cols = [p for p in param_cols if p != 'DTI-MD']
+
     total_vox = max(len(df), 1)
     clusters  = []
 
@@ -162,7 +170,11 @@ def load_mouse_data(csv_path: str) -> dict | None:
         vals     = sub[param_cols].to_numpy(dtype=float)
         centroid = {p: float(np.nanmean(vals[:, i]))
                     for i, p in enumerate(param_cols)}
-        centroid = _inject_virtual_md(centroid)
+        # Only inject virtual MD when AD+RD are both absent (MD is the sole
+        # diffusion metric for that mouse).  When AD+RD are present, MD is
+        # redundant and should not be added.
+        if not (_has_ad and _has_rd):
+            centroid = _inject_virtual_md(centroid)
 
         user_label = "Unknown"
         if "Habitat_label" in sub.columns:
