@@ -89,14 +89,19 @@ def run_classic_for_mouse(csv_files, method, k_range, k_override,
         best_k = chosen_k
 
         df_scaled["Habitat"] = labels
-        df_scaled.to_csv(os.path.join(out_dir, "habitats_result.csv"), index=False)
 
-        # Use `parameters` (already resolved — DTI-MD excluded when AD+RD present)
-        # NOT df_scaled.columns, which still contains DTI-MD from the original CSV.
+        # Save only resolved parameters — df_scaled is a copy of df_all which may
+        # still contain DTI-MD even when AD+RD are present (resolve_dti_parameters
+        # removes it from `parameters` but not from the DataFrame).  Saving the
+        # full DataFrame would cause load_mouse_data to pick up DTI-MD and produce
+        # a 7-feature centroid matrix while cr["features"] only has 6, breaking
+        # the PCA transform in _draw_pca.
+        csv_path  = os.path.join(out_dir, "habitats_result.csv")
+        save_cols = ['X', 'Y', 'Slice'] + [p for p in parameters if p in df_scaled.columns] + ['Habitat']
+        df_scaled[save_cols].to_csv(csv_path, index=False)
+
         feat_cols  = parameters
         centroids  = df_scaled.groupby("Habitat")[feat_cols].mean().values
-
-        csv_path = os.path.join(out_dir, "habitats_result.csv")
         log(f"  Classic k={best_k}")
         return {
             "labels"    : labels,
