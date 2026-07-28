@@ -96,6 +96,7 @@ def run_classic_for_mouse(csv_files, method, k_range, k_override,
         feat_cols  = parameters
         centroids  = df_scaled.groupby("Habitat")[feat_cols].mean().values
 
+        csv_path = os.path.join(out_dir, "habitats_result.csv")
         log(f"  Classic k={best_k}")
         return {
             "labels"    : labels,
@@ -104,6 +105,7 @@ def run_classic_for_mouse(csv_files, method, k_range, k_override,
             "df"        : df_scaled,
             "centroids" : centroids,
             "k"         : int(best_k),
+            "csv_path"  : csv_path,
         }
     except Exception as e:
         import traceback
@@ -117,44 +119,28 @@ def run_classic_for_mouse(csv_files, method, k_range, k_override,
 def run_discovery_meta(classic_results, method, k_range, k_override, n_init, log):
     """
     Meta-cluster per-mouse classic centroids and map labels back to voxel level.
-    Built directly from in-memory classic results.
-    Clusters with fewer than SIZE_FLOOR voxels are excluded from the centroid pool
-    to prevent artifact micro-clusters (extreme outlier values) from corrupting
-    the meta-clustering K selection.
+
+    Uses load_mouse_data() from multi_mouse_discovery — the exact same function
+    as standalone Discovery — so SIZE_FLOOR filtering, centroid building and
+    parameter alignment are identical in both modes.
 
     Returns {mouse_name: {labels, features, parameters, centroids, common_params, k}}
     or None on failure.
     """
-    from multi_mouse_discovery import SIZE_FLOOR
+    from multi_mouse_discovery import load_mouse_data
 
     try:
         mice_list = []
         for name, cr in classic_results.items():
-            df     = cr["df"]
-            params = cr["parameters"]
-            total  = max(len(df), 1)
-            clusters = []
-            n_dropped = 0
-            for cid, sub in df.groupby("Habitat"):
-                n_vox = len(sub)
-                if n_vox < SIZE_FLOOR:
-                    n_dropped += 1
-                    continue
-                centroid = {p: float(sub[p].mean())
-                            for p in params if p in sub.columns}
-                clusters.append({
-                    "cluster_id": int(cid),
-                    "user_label": "Unknown",
-                    "n_voxels"  : n_vox,
-                    "proportion": n_vox / total,
-                    "centroid"  : centroid,
-                })
-            if n_dropped:
-                log(f"  [Discovery] {name}: {n_dropped} cluster(s) dropped (< {SIZE_FLOOR} vox)")
-            if clusters:
-                mice_list.append({"name": name, "clusters": clusters})
-            else:
-                log(f"  [Discovery] {name}: no habitats found")
+            csv_path = cr.get("csv_path")
+            if not csv_path or not os.path.isfile(csv_path):
+                log(f"  [Discovery] {name}: habitats_result.csv not found — skipped")
+                continue
+            mouse_data = load_mouse_data(csv_path)
+            if mouse_data is None:
+                log(f"  [Discovery] {name}: load_mouse_data returned None — skipped")
+                continue
+            mice_list.append(mouse_data)
 
         if len(mice_list) < 2:
             log("  [Discovery] Need ≥ 2 valid mice — skipped")
@@ -195,17 +181,26 @@ def run_discovery_meta(classic_results, method, k_range, k_override, n_init, log
             for i in range(chosen_k)
         ])
 
-        # Map (mouse, classic_cluster_id) → meta habitat id
+        # Map (mouse_name, classic_cluster_id) → meta habitat id
         cluster_to_meta = {
             (rm["mouse"], rm["cluster_id"]): int(meta_labels[i])
             for i, rm in enumerate(row_meta)
         }
 
+        # row_meta["mouse"] comes from load_mouse_data → _mouse_name(csv_path),
+        # i.e. the parent folder of the CSV.  Use the same function to build
+        # the lookup key when mapping voxels back.
+        from multi_mouse_discovery import _mouse_name as _mmname
+
         out = {}
         for name, cr in classic_results.items():
+            csv_path = cr.get("csv_path")
+            if not csv_path:
+                continue
+            mm_name   = _mmname(csv_path)
             hab_col   = cr["df"]["Habitat"].values
             disc_lbls = np.array([
-                cluster_to_meta.get((name, int(h)), 0) for h in hab_col
+                cluster_to_meta.get((mm_name, int(h)), 0) for h in hab_col
             ])
             out[name] = {
                 "labels"       : disc_lbls,
