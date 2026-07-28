@@ -117,30 +117,40 @@ def run_classic_for_mouse(csv_files, method, k_range, k_override,
 def run_discovery_meta(classic_results, method, k_range, k_override, n_init, log):
     """
     Meta-cluster per-mouse classic centroids and map labels back to voxel level.
-    Built directly from in-memory classic results — avoids SIZE_FLOOR filtering
-    that would discard small-tumor habitats when going through load_mouse_data.
+    Built directly from in-memory classic results.
+    Clusters with fewer than SIZE_FLOOR voxels are excluded from the centroid pool
+    to prevent artifact micro-clusters (extreme outlier values) from corrupting
+    the meta-clustering K selection.
 
     Returns {mouse_name: {labels, features, parameters, centroids, common_params, k}}
     or None on failure.
     """
+    from multi_mouse_discovery import SIZE_FLOOR
+
     try:
-        # Build mice_list directly from classic_results (no SIZE_FLOOR filter)
         mice_list = []
         for name, cr in classic_results.items():
             df     = cr["df"]
             params = cr["parameters"]
             total  = max(len(df), 1)
             clusters = []
+            n_dropped = 0
             for cid, sub in df.groupby("Habitat"):
+                n_vox = len(sub)
+                if n_vox < SIZE_FLOOR:
+                    n_dropped += 1
+                    continue
                 centroid = {p: float(sub[p].mean())
                             for p in params if p in sub.columns}
                 clusters.append({
                     "cluster_id": int(cid),
                     "user_label": "Unknown",
-                    "n_voxels"  : len(sub),
-                    "proportion": len(sub) / total,
+                    "n_voxels"  : n_vox,
+                    "proportion": n_vox / total,
                     "centroid"  : centroid,
                 })
+            if n_dropped:
+                log(f"  [Discovery] {name}: {n_dropped} cluster(s) dropped (< {SIZE_FLOOR} vox)")
             if clusters:
                 mice_list.append({"name": name, "clusters": clusters})
             else:
