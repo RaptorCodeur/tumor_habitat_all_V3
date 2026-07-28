@@ -14,17 +14,19 @@ import matplotlib.image as mpimg
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.colors import ListedColormap
 
-from pipeline.joint_loading import load_joint_dataset
-from pipeline.selection     import select_optimal_k
-from pipeline.clustering    import run_clustering
-from pipeline.export        import export_results, save_centroids_json
-from pipeline.labeling      import show_habitat_map
-from pipeline.spatial       import _necrosis_guard, _compute_dtopo
-from config                 import (N_JOBS_GAP, HABITAT_COLORS_HEX,
-                                     GMM_SILHOUETTE_GUARD, KMEANS_GAP_GUARD,
-                                     JOINT_MIN_CLUSTER_SIZE_RATIO,
-                                     DTOPO_JOINT_WEIGHT,
-                                     DTOPO_MIN_NECROSIS_FRACTION)
+from pipeline.joint_loading  import load_joint_dataset
+from pipeline.selection      import select_optimal_k
+from pipeline.clustering     import run_clustering
+from pipeline.export         import export_results, save_centroids_json
+from pipeline.labeling       import show_habitat_map
+from pipeline.spatial        import _necrosis_guard, _compute_dtopo
+from pipeline.habitat_atlas  import _balanced_sample, VOXELS_PER_MOUSE
+from config                  import (N_JOBS_GAP, HABITAT_COLORS_HEX,
+                                      GMM_SILHOUETTE_GUARD, KMEANS_GAP_GUARD,
+                                      JOINT_MIN_CLUSTER_SIZE_RATIO,
+                                      DTOPO_JOINT_WEIGHT,
+                                      DTOPO_MIN_NECROSIS_FRACTION,
+                                      RANDOM_SEED)
 
 _NORM_YLABEL = {
     'cl'    : 'CL-normalized value  (0 = contralateral tissue)',
@@ -483,6 +485,43 @@ def _compute_joint_dtopo(df_pooled, labels, centroids, common_params,
 
 
 # ------------------------------------------------------------------
+# Balanced GMM helpers for per-mouse weighting
+# ------------------------------------------------------------------
+
+def _fit_balanced_gmm(features, mouse_ids, k, n_init):
+    """Train a GMM on a balanced subsample (VOXELS_PER_MOUSE per mouse)."""
+    from sklearn.mixture import GaussianMixture
+    bal = _balanced_sample(features, mouse_ids)
+    gmm = GaussianMixture(
+        n_components=k, n_init=n_init,
+        covariance_type='full', random_state=RANDOM_SEED,
+        max_iter=300, init_params='kmeans')
+    gmm.fit(bal)
+    return gmm
+
+
+def _select_k_gmm_balanced(features, mouse_ids, k_range, n_init, log_fn=print):
+    """
+    BIC-based K selection using balanced-subsample GMMs.
+    Training uses VOXELS_PER_MOUSE voxels per mouse; BIC is evaluated
+    on all voxels (same strategy as the Atlas).
+    Returns (best_k, gmm_cache).
+    """
+    bic_dict  = {}
+    gmm_cache = {}
+    log_fn(f"Balanced GMM K-selection ({VOXELS_PER_MOUSE} vox/mouse, "
+           f"K={list(k_range)}) …")
+    for k in k_range:
+        gmm          = _fit_balanced_gmm(features, mouse_ids, k, n_init)
+        bic_dict[k]  = gmm.bic(features)
+        gmm_cache[k] = gmm
+        log_fn(f"  K={k}  BIC={bic_dict[k]:.1f}")
+    best_k = min(bic_dict, key=bic_dict.get)
+    log_fn(f"  → Balanced-GMM best K = {best_k}")
+    return best_k, gmm_cache
+
+
+# ------------------------------------------------------------------
 # Main joint pipeline
 # ------------------------------------------------------------------
 
@@ -493,7 +532,8 @@ def run_joint_pipeline(mice_list, method, k_range, n_init_gmm, n_refs,
                         kmeans_gap_guard=KMEANS_GAP_GUARD,
                         min_cluster_ratio=JOINT_MIN_CLUSTER_SIZE_RATIO,
                         dtopo_weight=DTOPO_JOINT_WEIGHT,
-                        dtopo_min_frac=DTOPO_MIN_NECROSIS_FRACTION):
+                        dtopo_min_frac=DTOPO_MIN_NECROSIS_FRACTION,
+                        use_mouse_weighting=True):
     """
     Joint clustering pipeline across N mice.
 
@@ -501,8 +541,10 @@ def run_joint_pipeline(mice_list, method, k_range, n_init_gmm, n_refs,
     -----
     1. Load + normalize all mice (CL or per-mouse robust)
     2. Pool all voxels into one feature matrix
-    3. Select optimal K
+    3. Select optimal K  (balanced-GMM BIC when use_mouse_weighting=True)
     4. Run clustering → universal H0…Hk
+       GMM: trained on balanced subsample, predicts on all voxels.
+       K-means: uses sample_weight=1/n_i per voxel.
     5. Compute global centroids
     6. Two-pass: add d_topo_norm if necrosis detected
 
@@ -514,9 +556,20 @@ def run_joint_pipeline(mice_list, method, k_range, n_init_gmm, n_refs,
     # 1. Load + normalize
     common_params, df_pooled = load_joint_dataset(
         mice_list, normalization=normalization, log_fn=log_fn)
-    features = np.nan_to_num(df_pooled[common_params].values, nan=0.0)
-    n_total  = len(features)
+    features  = np.nan_to_num(df_pooled[common_params].values, nan=0.0)
+    n_total   = len(features)
+    mouse_ids = df_pooled['mouse_id'].values.astype(int)
     log_fn(f"Feature matrix: {n_total} voxels × {len(common_params)} params")
+
+    # Per-mouse weighting: 1/n_i per voxel so each mouse contributes equally
+    if use_mouse_weighting:
+        n_mice_       = len(mice_list)
+        mouse_counts  = np.bincount(mouse_ids, minlength=n_mice_).astype(np.float64)
+        sample_weight = 1.0 / mouse_counts[mouse_ids]
+        sample_weight /= sample_weight.sum()
+        log_fn(f"Per-mouse weighting enabled (1/n_i, {VOXELS_PER_MOUSE} vox/mouse for GMM fit)")
+    else:
+        sample_weight = None
 
     # 2. K selection
     if k_override and k_override >= 2:
@@ -524,22 +577,34 @@ def run_joint_pipeline(mice_list, method, k_range, n_init_gmm, n_refs,
         log_fn(f"K override: {best_k} (size guard skipped)")
     else:
         log_fn(f"Selecting optimal K (method={method})…")
-        best_k, gmm_cache = select_optimal_k(
-            features, method=method, df_all=None,
-            k_range=k_range, n_refs=n_refs, n_jobs=N_JOBS_GAP,
-            n_init_gmm=n_init_gmm,
-            gmm_silhouette_guard=gmm_silhouette_guard,
-            kmeans_gap_guard=kmeans_gap_guard,
-            output_dir=output_dir)
+        if use_mouse_weighting and method == 'gmm':
+            best_k, gmm_cache = _select_k_gmm_balanced(
+                features, mouse_ids, k_range, n_init_gmm, log_fn)
+        else:
+            best_k, gmm_cache = select_optimal_k(
+                features, method=method, df_all=None,
+                k_range=k_range, n_refs=n_refs, n_jobs=N_JOBS_GAP,
+                n_init_gmm=n_init_gmm,
+                gmm_silhouette_guard=gmm_silhouette_guard,
+                kmeans_gap_guard=kmeans_gap_guard,
+                output_dir=output_dir)
         log_fn(f"Optimal K = {best_k}")
 
     # 3. Clustering — size guard loop (only when K is auto-selected)
     current_k = best_k
     while True:
         log_fn(f"Running joint {method.upper()} clustering (k={current_k})…")
+
+        # For weighted GMM: ensure the balanced model is in cache for current_k
+        active_cache = gmm_cache
+        if use_mouse_weighting and method == 'gmm' and current_k not in gmm_cache:
+            active_cache = {current_k: _fit_balanced_gmm(
+                features, mouse_ids, current_k, n_init_gmm)}
+
         labels, extra_info = run_clustering(
             features, df_pooled, current_k,
-            method=method, n_init_gmm=n_init_gmm, gmm_cache=gmm_cache)
+            method=method, n_init_gmm=n_init_gmm, gmm_cache=active_cache,
+            sample_weight=sample_weight if (use_mouse_weighting and method == 'kmeans') else None)
 
         if k_override and k_override >= 2:
             best_k = current_k
@@ -596,9 +661,15 @@ def run_joint_pipeline(mice_list, method, k_range, n_init_gmm, n_refs,
         common_params = common_params + ['d_topo_norm']
         features      = np.nan_to_num(df_pooled[common_params].values, nan=0.0)
 
+        pass2_cache = {}
+        if use_mouse_weighting and method == 'gmm':
+            pass2_cache = {best_k: _fit_balanced_gmm(
+                features, mouse_ids, best_k, n_init_gmm)}
+
         labels, extra_info = run_clustering(
             features, df_pooled, best_k,
-            method=method, n_init_gmm=n_init_gmm, gmm_cache={})
+            method=method, n_init_gmm=n_init_gmm, gmm_cache=pass2_cache,
+            sample_weight=sample_weight if (use_mouse_weighting and method == 'kmeans') else None)
 
         df_pooled['Habitat'] = labels
         proba = extra_info.get('proba')

@@ -63,11 +63,12 @@ def _cluster_gmm(features_scaled, k, n_init_gmm=N_INIT_GMM, gmm_cache=None):
     return labels, {"proba": proba, "model": gmm}
 
 
-def _cluster_kmeans(features_scaled, k):
+def _cluster_kmeans(features_scaled, k, sample_weight=None):
     """Standard K-means clustering in robust-scaled feature space."""
     print(f"\nRunning K-means (k={k})...")
-    km     = KMeans(n_clusters=k, random_state=RANDOM_SEED, n_init=10)
-    labels = km.fit_predict(features_scaled)
+    km = KMeans(n_clusters=k, random_state=RANDOM_SEED, n_init=10)
+    km.fit(features_scaled, sample_weight=sample_weight)
+    labels = km.labels_
     _print_cluster_sizes(labels, k)
     return labels, {"model": km}
 
@@ -119,10 +120,13 @@ def _cluster_srsc(features_scaled, df_all, k,
 
 def run_clustering(features_scaled, df_all, best_k, method='gmm',
                    spatial_weight=SPATIAL_WEIGHT, n_init_gmm=N_INIT_GMM,
-                   gmm_cache=None):
+                   gmm_cache=None, sample_weight=None):
     """
     Dispatcher: routes to the appropriate clustering algorithm.
     Returns (labels array, extra_info dict).
+
+    sample_weight : optional (n_voxels,) array used only by K-means.
+                    For GMM, inject a pre-fitted balanced model via gmm_cache.
     """
     if method == 'gmm':
         return _cluster_gmm(features_scaled, best_k, n_init_gmm, gmm_cache=gmm_cache)
@@ -130,7 +134,7 @@ def run_clustering(features_scaled, df_all, best_k, method='gmm',
         return _cluster_srsc(features_scaled, df_all, best_k,
                               spatial_weight=spatial_weight)
     elif method == 'kmeans':
-        return _cluster_kmeans(features_scaled, best_k)
+        return _cluster_kmeans(features_scaled, best_k, sample_weight=sample_weight)
     else:
         raise ValueError(f"Unknown method: {method!r}")
 

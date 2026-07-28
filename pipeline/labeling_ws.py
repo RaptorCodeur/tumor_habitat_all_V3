@@ -523,7 +523,10 @@ def label_clusters_ws(centroids, parameters,
         best_lbl = max(p, key=p.get)
         best_p   = sorted_p[0]
         second_p = sorted_p[1] if len(sorted_p) > 1 else 0.0
-        n_votes  = sum(1 for v in L[c].values() if v != ABSTAIN)
+        n_votes          = sum(1 for v in L[c].values() if v != ABSTAIN)
+        n_lfs_for_best   = sum(1 for _, _, tgt in LF_REGISTRY if tgt == best_lbl)
+        n_votes_for_best = sum(1 for name, _, tgt in LF_REGISTRY
+                               if tgt == best_lbl and L[c][name] != ABSTAIN)
 
         result[c] = {
             'label'          : best_lbl,
@@ -535,7 +538,8 @@ def label_clusters_ws(centroids, parameters,
             'is_ambiguous'   : second_p >= best_p - 0.15,
             'lf_votes'       : L[c],
             'n_votes'        : n_votes,
-            'desc'           : (f"{n_votes}/{len(LF_REGISTRY)} LFs voted — "
+            'desc'           : (f"{n_votes_for_best}/{n_lfs_for_best} LFs voted"
+                                f"  ({n_votes}/{len(LF_REGISTRY)} total) — "
                                 f"P({best_lbl})={best_p:.2f}"),
             'anchor_median'  : anchor_med,
             'anchor_necrotic': anchor_nec,
