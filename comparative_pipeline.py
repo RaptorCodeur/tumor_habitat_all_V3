@@ -207,11 +207,25 @@ def run_discovery_meta(classic_results, method, k_range, k_override, n_init, log
             disc_lbls = np.array([
                 cluster_to_meta.get((mm_name, int(h)), 0) for h in hab_col
             ])
+
+            # meta_centroids live in common_params space which may contain a
+            # virtual DTI-MD injected by load_mouse_data (_inject_virtual_md).
+            # cr["features"] only has the resolved parameters (no DTI-MD), so
+            # we must project meta_centroids into that same subspace before
+            # passing them to _draw_pca (which fits PCA on cr["features"]).
+            mouse_params = list(cr["parameters"])
+            if common_params != mouse_params:
+                idx = [common_params.index(p) for p in mouse_params
+                       if p in common_params]
+                cents_viz = meta_centroids[:, idx]
+            else:
+                cents_viz = meta_centroids
+
             out[name] = {
                 "labels"       : disc_lbls,
                 "features"     : cr["features"],
-                "parameters"   : cr["parameters"],
-                "centroids"    : meta_centroids,
+                "parameters"   : mouse_params,
+                "centroids"    : cents_viz,
                 "common_params": common_params,
                 "k"            : chosen_k,
             }
