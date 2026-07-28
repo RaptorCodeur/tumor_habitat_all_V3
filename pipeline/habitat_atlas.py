@@ -12,11 +12,15 @@ implement equal-weight contribution via balanced subsampling instead.
 """
 
 import numpy as np
-from sklearn.mixture import GaussianMixture
-from scipy.optimize import linear_sum_assignment
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from sklearn.mixture   import GaussianMixture
+from sklearn.metrics   import silhouette_score
+from scipy.optimize    import linear_sum_assignment
 from scipy.spatial.distance import cdist
 
-from config import RANDOM_SEED
+from config import RANDOM_SEED, GMM_SILHOUETTE_GUARD
 
 VOXELS_PER_MOUSE = 500   # voxels contributed per mouse to the GMM fit
 
@@ -69,24 +73,144 @@ def _align_centroids(ref: np.ndarray, other: np.ndarray) -> np.ndarray:
 # K selection
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _elbow(k_list: list, scores: list) -> int:
+    """
+    Kneedle elbow: point of maximum perpendicular distance from the line
+    connecting the first and last (k, score) values.
+    Works for both increasing (Silhouette) and decreasing (BIC) curves.
+    """
+    if len(k_list) < 3:
+        return k_list[int(np.argmax(scores))]
+    ka = np.array(k_list,  dtype=float)
+    sa = np.array(scores,  dtype=float)
+    ka = (ka - ka.min()) / (ka.max() - ka.min() + 1e-10)
+    sa = (sa - sa.min()) / (sa.max() - sa.min() + 1e-10)
+    d  = np.array([ka[-1] - ka[0], sa[-1] - sa[0]])
+    d /= np.linalg.norm(d) + 1e-10
+    dists = [abs((ka[i]-ka[0])*d[1] - (sa[i]-sa[0])*d[0]) for i in range(len(k_list))]
+    return k_list[int(np.argmax(dists))]
+
+
+def _icl(gmm: GaussianMixture, features: np.ndarray) -> float:
+    """
+    Integrated Completed Likelihood = BIC + 2 × classification entropy.
+    Penalises fuzzy/overlapping clusters → selects lower K than BIC alone.
+    EN = 0 when all posteriors are hard (0 or 1); large when clusters overlap.
+    """
+    post    = gmm.predict_proba(features)           # (n, K)
+    entropy = -np.sum(post * np.log(post + 1e-300)) # classification entropy
+    return gmm.bic(features) + 2.0 * entropy
+
+
+def _plot_atlas_k(k_list, bic_vals, icl_vals, sil_vals,
+                  k_bic, k_icl, k_sil, k_final, out_dir: str) -> None:
+    """3-panel K-selection figure saved to out_dir/k_selection_atlas.png."""
+    import os
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+
+    for ax, vals, label, chosen, better in [
+        (axes[0], bic_vals, "BIC  (elbow, lower=better)", k_bic,  "min"),
+        (axes[1], icl_vals, "ICL  (minimum, lower=better)", k_icl, "min"),
+        (axes[2], sil_vals, "Silhouette  (elbow, higher=better)", k_sil, "max"),
+    ]:
+        ax.plot(k_list, vals, marker='o', color='steelblue')
+        ax.axvline(chosen, color='crimson', ls='--', lw=1.5, label=f'Selected K={chosen}')
+        ax.axvline(k_final, color='forestgreen', ls='-', lw=2.0,
+                   alpha=0.7, label=f'Final K={k_final}')
+        ax.set_xlabel("K")
+        ax.set_title(label, fontsize=9)
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3)
+
+    fig.suptitle(f"Atlas K selection  —  Final K={k_final}  "
+                 f"(BIC-elbow={k_bic} · ICL-min={k_icl} · Sil-elbow={k_sil})",
+                 fontsize=10, fontweight='bold')
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, "k_selection_atlas.png"),
+                dpi=150, bbox_inches='tight')
+    plt.close(fig)
+
+
 def select_atlas_k(features: np.ndarray, mouse_ids: np.ndarray,
                    k_range: range, n_init: int = 20,
-                   seed: int = RANDOM_SEED, log=print) -> tuple[int, dict]:
+                   seed: int = RANDOM_SEED,
+                   gmm_silhouette_guard: float | None = GMM_SILHOUETTE_GUARD,
+                   out_dir: str | None = None,
+                   log=print) -> tuple[int, dict]:
     """
-    BIC-based K selection using the weighted GMM.
-    BIC is evaluated on the raw (unweighted) log-likelihood so it is
-    comparable to the standard GMM BIC while still training on balanced data.
+    Triple-criterion K selection for the weighted GMM atlas.
+
+    Three criteria evaluated on the full (unsubsampled) feature matrix:
+      1. BIC elbow  — knee of the BIC curve (stops decreasing rapidly)
+      2. ICL minimum — BIC + 2×entropy; penalises fuzzy clusters → lower K
+      3. Silhouette elbow — knee of the Silhouette curve
+
+    Decision logic:
+      • Majority vote (≥ 2/3 agree) → chosen K
+      • All disagree → ICL (most conservative)
+      • Silhouette guard: if Sil@chosen_K < gmm_silhouette_guard → Silhouette elbow
 
     Returns (best_k, {k: bic}).
     """
-    bic_dict = {}
-    log(f"Balanced-GMM BIC over K={list(k_range)} ({VOXELS_PER_MOUSE} voxels/mouse) …")
-    for k in k_range:
-        gmm         = _fit_gmm(features, mouse_ids, k, n_init, seed)
-        bic_dict[k] = gmm.bic(features)
-        log(f"  K={k}  BIC={bic_dict[k]:.1f}")
-    best_k = min(bic_dict, key=bic_dict.get)
-    log(f"  → Best K = {best_k}")
+    from collections import Counter
+
+    k_list    = list(k_range)
+    bic_vals  = []
+    icl_vals  = []
+    sil_vals  = []
+    bic_dict  = {}
+
+    log(f"  Atlas K selection  K={k_list}  ({VOXELS_PER_MOUSE} vox/mouse)")
+    log("  Criteria: BIC-elbow · ICL-min · Silhouette-elbow")
+
+    for k in k_list:
+        gmm  = _fit_gmm(features, mouse_ids, k, n_init, seed)
+        bic  = gmm.bic(features)
+        icl  = _icl(gmm, features)
+        labs = gmm.predict(features)
+        sil  = (silhouette_score(features, labs)
+                if len(np.unique(labs)) > 1 else 0.0)
+
+        bic_dict[k] = bic
+        bic_vals.append(bic)
+        icl_vals.append(icl)
+        sil_vals.append(sil)
+        log(f"    K={k}  BIC={bic:.1f}  ICL={icl:.1f}  Sil={sil:.3f}")
+
+    # ── Criteria ──────────────────────────────────────────────────────────────
+    # BIC elbow: find the knee on the decreasing BIC curve (negate → increasing)
+    k_bic = _elbow(k_list, [-v for v in bic_vals])
+    k_icl = k_list[int(np.argmin(icl_vals))]
+    k_sil = _elbow(k_list, sil_vals)
+
+    log(f"  BIC-elbow={k_bic}  ICL-min={k_icl}  Sil-elbow={k_sil}")
+
+    # ── Majority vote ─────────────────────────────────────────────────────────
+    votes = Counter([k_bic, k_icl, k_sil])
+    top_k, top_n = votes.most_common(1)[0]
+    if top_n >= 2:
+        best_k = top_k
+        log(f"  Majority vote → K={best_k}  ({top_n}/3 criteria agree)")
+    else:
+        best_k = k_icl   # all disagree: ICL is most conservative
+        log(f"  All criteria disagree → ICL (conservative) K={best_k}")
+
+    # ── Silhouette guard ──────────────────────────────────────────────────────
+    sil_at_best = sil_vals[k_list.index(best_k)]
+    if gmm_silhouette_guard is not None and sil_at_best < gmm_silhouette_guard:
+        log(f"  [!] Sil guard: Sil@K={best_k}={sil_at_best:.3f} < {gmm_silhouette_guard}"
+            f" → override with Sil-elbow K={k_sil}")
+        best_k = k_sil
+
+    log(f"  ✓ Final K = {best_k}")
+
+    if out_dir:
+        try:
+            _plot_atlas_k(k_list, bic_vals, icl_vals, sil_vals,
+                          k_bic, k_icl, k_sil, best_k, out_dir)
+        except Exception:
+            pass
+
     return best_k, bic_dict
 
 
