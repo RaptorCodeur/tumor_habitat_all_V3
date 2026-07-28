@@ -15,7 +15,7 @@ from sklearn.decomposition import PCA
 
 from pipeline.loading    import load_data, robust_scale, resolve_dti_parameters
 from pipeline.spatial    import prepare_features
-from pipeline.clustering import run_clustering
+from pipeline.clustering import run_clustering, run_clustering_with_size_guard
 from pipeline.selection  import select_optimal_k
 from pipeline.joint_clustering import run_joint_pipeline
 from multi_mouse_discovery import (
@@ -79,14 +79,14 @@ def run_classic_for_mouse(csv_files, method, k_range, k_override,
                 kmeans_gap_guard     = (method == "kmeans"),
             )
 
-        labels, _   = run_clustering(
-            features_clust, df_scaled, chosen_k,
+        labels, _, best_k = run_clustering_with_size_guard(
+            features_clust, feat_sc, df_scaled, chosen_k,
             method        = method,
             spatial_weight= 0.0,
             n_init_gmm    = n_init,
+            parameters    = parameters,
             gmm_cache     = gmm_cache,
         )
-        best_k = chosen_k
 
         df_scaled["Habitat"] = labels
 
