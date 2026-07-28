@@ -1277,9 +1277,13 @@ class HabitatApp(tk.Tk):
                                  "Select CSV files for at least one mouse.")
             return
 
+        default_dir = os.path.dirname(os.path.dirname(mice_list[0]["files"][0]))
+        if not self._confirm_output_dir(self._cmp_output_dir, self._cmp_output_name, default_dir):
+            return
+
         out_dir = self._cmp_output_dir.get()
         if not out_dir:
-            out_dir = os.path.dirname(os.path.dirname(mice_list[0]["files"][0]))
+            out_dir = default_dir
 
         params = {
             "mice"      : mice_list,
@@ -1892,13 +1896,15 @@ class HabitatApp(tk.Tk):
             messagebox.showerror(t("err_title"), t("err_k_range"))
             return
 
+        default_dir = os.path.dirname(self._ia_animals[0]["files"][0])
+        if not self._confirm_output_dir(self._ia_output_dir, self._ia_output_name, default_dir):
+            return
+
         if self._ia_output_dir.get():
             out_root = os.path.join(self._ia_output_dir.get(),
                                     self._ia_output_name.get())
         else:
-            out_root = os.path.join(
-                os.path.dirname(self._ia_animals[0]["files"][0]),
-                self._ia_output_name.get())
+            out_root = os.path.join(default_dir, self._ia_output_name.get())
 
         params = {
             "animals"             : [{"files": list(a["files"])} for a in self._ia_animals],
@@ -2260,13 +2266,15 @@ class HabitatApp(tk.Tk):
             messagebox.showerror(t("err_title"), t("err_k_range"))
             return
 
+        default_dir = os.path.dirname(self._im_csv_files[0])
+        if not self._confirm_output_dir(self._im_output_dir, self._im_output_name, default_dir):
+            return
+
         if self._im_output_dir.get():
             out_root = os.path.join(self._im_output_dir.get(),
                                     self._im_output_name.get())
         else:
-            out_root = os.path.join(
-                os.path.dirname(self._im_csv_files[0]),
-                self._im_output_name.get())
+            out_root = os.path.join(default_dir, self._im_output_name.get())
 
         params = {
             "csv_files"           : list(self._im_csv_files),
@@ -2824,9 +2832,11 @@ class HabitatApp(tk.Tk):
                                  "Assign mice to at least 2 different groups.")
             return
 
-        out_dir = self._atl_output_dir.get()
-        if not out_dir:
-            out_dir = os.path.dirname(os.path.dirname(mice_data[0]["files"][0]))
+        default_dir = os.path.dirname(os.path.dirname(mice_data[0]["files"][0]))
+        if not self._confirm_output_dir(self._atl_output_dir, self._atl_output_name, default_dir):
+            return
+
+        out_dir = self._atl_output_dir.get() or default_dir
         out_dir = os.path.join(out_dir, self._atl_output_name.get() or "atlas_comparison")
 
         k_ov_str = self._atl_k_override.get().strip()
@@ -2946,12 +2956,41 @@ class HabitatApp(tk.Tk):
             return False
         return True
 
+    def _confirm_output_dir(self, dir_var, name_var, default_dir):
+        """
+        If output location or folder name is not set, show a warning dialog
+        with the default path that will be used.
+        Returns True to proceed, False to cancel so the user can set it.
+        """
+        dir_empty  = not dir_var.get().strip()
+        name_empty = name_var is not None and not name_var.get().strip()
+
+        if not dir_empty and not name_empty:
+            return True
+
+        name         = (name_var.get().strip() if name_var else "") or "output"
+        default_path = os.path.join(default_dir, name)
+
+        lines = []
+        if dir_empty:
+            lines.append("• No output location selected")
+        if name_empty:
+            lines.append("• No folder name specified")
+        msg = "\n".join(lines)
+        msg += f"\n\nResults will be saved to:\n{default_path}\n\nProceed with this default?"
+
+        return messagebox.askyesno("Output not configured", msg, icon='warning')
+
     def _run(self):
         """
         Read ALL tk.Variable values here (main thread) before launching
         the secondary thread. Never read tk.Variable from the thread.
         """
         if not self._validate():
+            return
+
+        default_dir = os.path.dirname(self.csv_files[0])
+        if not self._confirm_output_dir(self.output_dir, self.output_name, default_dir):
             return
 
         self.btn_run.config(state='disabled', text=t("running"))
@@ -3425,13 +3464,15 @@ class HabitatApp(tk.Tk):
             messagebox.showerror(t("err_title"), t("err_mouse_no_csv"))
             return
 
+        default_dir = os.path.dirname(self._disc_animals[0]["files"][0])
+        if not self._confirm_output_dir(self._disc_output_dir, self._disc_output_name, default_dir):
+            return
+
         if self._disc_output_dir.get():
             out_root = os.path.join(self._disc_output_dir.get(),
                                     self._disc_output_name.get())
         else:
-            out_root = os.path.join(
-                os.path.dirname(self._disc_animals[0]["files"][0]),
-                self._disc_output_name.get())
+            out_root = os.path.join(default_dir, self._disc_output_name.get())
 
         params = {
             "animals"   : [{"files": list(a["files"])} for a in self._disc_animals],
@@ -4127,13 +4168,15 @@ class HabitatApp(tk.Tk):
             messagebox.showerror(t("err_title"), t("err_mouse_no_csv"))
             return
 
+        default_dir = os.path.dirname(self._jt_animals[0]["files"][0])
+        if not self._confirm_output_dir(self._jt_output_dir, self._jt_output_name, default_dir):
+            return
+
         if self._jt_output_dir.get():
             out_root = os.path.join(self._jt_output_dir.get(),
                                     self._jt_output_name.get())
         else:
-            out_root = os.path.join(
-                os.path.dirname(self._jt_animals[0]["files"][0]),
-                self._jt_output_name.get())
+            out_root = os.path.join(default_dir, self._jt_output_name.get())
 
         _GENERIC = {"v2", "v3", "v4", "v5", "gmm", "kmeans", "srsc",
                     "results", "output", "out", "run", "csv", "nifti",
