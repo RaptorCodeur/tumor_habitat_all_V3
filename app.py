@@ -554,7 +554,7 @@ class HabitatApp(tk.Tk):
         self._cmp_k_override   = tk.StringVar(value="")
         self._cmp_n_init_gmm   = tk.IntVar(value=N_INIT_GMM)
         self._cmp_n_refs       = tk.IntVar(value=N_REFS_GAP)
-        self._cmp_normalization = tk.StringVar(value='robust')
+        self._cmp_normalization = tk.StringVar(value='robust_global')
         self._cmp_output_name  = tk.StringVar(value="comparative_analysis")
         self._cmp_output_dir   = tk.StringVar(value="")
         self.btn_cmp_run       = None
@@ -1124,17 +1124,27 @@ class HabitatApp(tk.Tk):
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
-        # ── Normalization ─────────────────────────────────────────────
+        # ── Normalization (joint step only) ───────────────────────────
         ttk.Label(inner, text=t("joint_norm_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
         ttk.Radiobutton(
             inner,
-            text=t("norm_robust"),
+            text=t("norm_robust_global_jt_radio"),
+            variable=self._cmp_normalization, value='robust_global'
+        ).pack(anchor='w', padx=px + 4, pady=1)
+        ttk.Radiobutton(
+            inner,
+            text=t("norm_robust_jt_radio"),
             variable=self._cmp_normalization, value='robust'
         ).pack(anchor='w', padx=px + 4, pady=1)
         ttk.Radiobutton(
             inner,
-            text=t("norm_cl"),
+            text=t("norm_cl_hybrid_jt_radio"),
+            variable=self._cmp_normalization, value='cl_hybrid'
+        ).pack(anchor='w', padx=px + 4, pady=1)
+        ttk.Radiobutton(
+            inner,
+            text=t("norm_cl_jt_radio"),
             variable=self._cmp_normalization, value='cl'
         ).pack(anchor='w', padx=px + 4, pady=(1, 6))
 

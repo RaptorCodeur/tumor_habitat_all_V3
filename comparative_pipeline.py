@@ -598,7 +598,7 @@ def run_comparative_pdf(mice_data, method, k_range, k_override,
     k_override : str — digit string to force K, else ''
     n_init     : int
     n_refs     : int
-    norm       : 'robust' or 'cl'  (for Joint)
+    norm       : 'robust_global', 'robust', 'cl_hybrid', or 'cl'  (for Joint step)
     out_dir    : directory where PDF is saved
     pdf_name   : filename without extension
     log        : callable(str[, tag])
