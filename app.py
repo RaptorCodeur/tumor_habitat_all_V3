@@ -290,7 +290,7 @@ def _show_method_help(method_key):
 def _show_dtopo_help_window():
     """Standalone popup explaining d_topo weight and min-fraction parameters."""
     win = tk.Toplevel()
-    win.title("d_topo spatial feature — help")
+    win.title(t("wintitle_dtopo_help"))
     win.geometry("560x560")
     win.resizable(True, True)
     win.configure(bg=THEME["bg"])
@@ -356,7 +356,7 @@ def _show_dtopo_help_window():
             "After running, open the 'ℹ d_topo impact' tab in the results window "
             "to see the per-mouse decision table.")
 
-    ttk.Button(frame, text="Close",
+    ttk.Button(frame, text=t("close"),
                style="Secondary.TButton",
                command=win.destroy).pack(pady=14)
 
@@ -749,28 +749,28 @@ class HabitatApp(tk.Tk):
 
         # Tab 4 (Discovery)
         self._action_disc = ttk.Frame(self._action_frame)
-        self.btn_disc_run = ttk.Button(self._action_disc, text="▶  Run Discovery",
+        self.btn_disc_run = ttk.Button(self._action_disc, text=t("run_discovery"),
                                         style="Primary.TButton",
                                         command=self._run_discovery)
         self.btn_disc_run.pack(fill='x')
 
         # Tab 5 (Joint)
         self._action_joint = ttk.Frame(self._action_frame)
-        self.btn_jt_run = ttk.Button(self._action_joint, text="▶  Run Joint Clustering",
+        self.btn_jt_run = ttk.Button(self._action_joint, text=t("run_joint"),
                                       style="Primary.TButton",
                                       command=self._run_joint)
         self.btn_jt_run.pack(fill='x')
 
         # Tab 6 (Comparative)
         self._action_cmp = ttk.Frame(self._action_frame)
-        self.btn_cmp_run = ttk.Button(self._action_cmp, text="▶  Run Comparative Analysis",
+        self.btn_cmp_run = ttk.Button(self._action_cmp, text=t("run_comparative"),
                                        style="Primary.TButton",
                                        command=self._run_comparative)
         self.btn_cmp_run.pack(fill='x')
 
         # Tab 7 (Atlas)
         self._action_atlas = ttk.Frame(self._action_frame)
-        self.btn_atl_run = ttk.Button(self._action_atlas, text="▶  Run Atlas Comparison",
+        self.btn_atl_run = ttk.Button(self._action_atlas, text=t("run_atlas"),
                                        style="Primary.TButton",
                                        command=self._run_atlas)
         self.btn_atl_run.pack(fill='x')
@@ -810,12 +810,12 @@ class HabitatApp(tk.Tk):
         self.tab7 = ttk.Frame(notebook)
         self.tab8 = ttk.Frame(notebook)
 
-        notebook.add(self.tab1, text="Clustering")
+        notebook.add(self.tab1, text=t("tab_clustering"))
         notebook.add(self.tab4, text=t("tab_comparison"))
-        notebook.add(self.tab5, text="Discovery")
-        notebook.add(self.tab6, text="Joint")
-        notebook.add(self.tab7, text="Compare")
-        notebook.add(self.tab8, text="Atlas")
+        notebook.add(self.tab5, text=t("tab_discovery"))
+        notebook.add(self.tab6, text=t("tab_joint"))
+        notebook.add(self.tab7, text=t("tab_compare"))
+        notebook.add(self.tab8, text=t("tab_atlas"))
 
         self._build_tab_clustering(self.tab1)
         self._build_tab_comparison(self.tab4)
@@ -1098,17 +1098,15 @@ class HabitatApp(tk.Tk):
                     lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
 
         ttk.Label(inner,
-                  text="Comparative Analysis  —  Classic | Discovery | Joint",
+                  text=t("cmp_title"),
                   style="Section.TLabel").pack(anchor='w', **pad)
         ttk.Label(inner,
-                  text="Select the raw MRI CSV files for each mouse. "
-                       "All three methods run on the same cohort and the "
-                       "results are saved as a multi-page PDF.",
+                  text=t("cmp_desc"),
                   style="Sub.TLabel",
                   wraplength=520).pack(anchor='w', padx=px, pady=(0, 10))
 
         # ── Mouse list ───────────────────────────────────────────────
-        ttk.Label(inner, text="Mice  (select raw MRI CSV files per mouse)",
+        ttk.Label(inner, text=t("mice_raw_csv"),
                   style="Section.TLabel").pack(anchor='w', **pad)
 
         list_frame = ttk.Frame(inner, style="Card.TFrame")
@@ -1127,23 +1125,23 @@ class HabitatApp(tk.Tk):
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # ── Normalization ─────────────────────────────────────────────
-        ttk.Label(inner, text="Joint normalization",
+        ttk.Label(inner, text=t("joint_norm_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
         ttk.Radiobutton(
             inner,
-            text="Per-mouse robust  (recommended)",
+            text=t("norm_robust"),
             variable=self._cmp_normalization, value='robust'
         ).pack(anchor='w', padx=px + 4, pady=1)
         ttk.Radiobutton(
             inner,
-            text="CL normalization  (requires contralateral ROI)",
+            text=t("norm_cl"),
             variable=self._cmp_normalization, value='cl'
         ).pack(anchor='w', padx=px + 4, pady=(1, 6))
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # ── Clustering method ────────────────────────────────────────
-        ttk.Label(inner, text="Clustering method",
+        ttk.Label(inner, text=t("method_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
         for val, key in [("gmm", "gmm_desc"), ("kmeans", "kmeans_desc")]:
             ttk.Radiobutton(inner, text=t(key),
@@ -1153,7 +1151,7 @@ class HabitatApp(tk.Tk):
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # ── K parameters ─────────────────────────────────────────────
-        ttk.Label(inner, text="K selection parameters",
+        ttk.Label(inner, text=t("k_params_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
 
         def crow(label, widget_fn):
@@ -1162,11 +1160,11 @@ class HabitatApp(tk.Tk):
             ttk.Label(f, text=label, width=30).pack(side='left')
             widget_fn(f)
 
-        crow("Min clusters (K min)",
+        crow(t("k_min_label"),
              lambda f: ttk.Spinbox(f, from_=2, to=10,
                                     textvariable=self._cmp_k_min,
                                     width=6).pack(side='left'))
-        crow("Max clusters (K max)",
+        crow(t("k_max_label"),
              lambda f: ttk.Spinbox(f, from_=3, to=15,
                                     textvariable=self._cmp_k_max,
                                     width=6).pack(side='left'))
@@ -1190,7 +1188,7 @@ class HabitatApp(tk.Tk):
 
         f_name = ttk.Frame(inner)
         f_name.pack(fill='x', padx=px, pady=3)
-        ttk.Label(f_name, text="PDF name", width=30).pack(side='left')
+        ttk.Label(f_name, text=t("pdf_name_label"), width=30).pack(side='left')
         ttk.Entry(f_name, textvariable=self._cmp_output_name,
                   width=22).pack(side='left')
 
@@ -1201,7 +1199,7 @@ class HabitatApp(tk.Tk):
         ttk.Button(f_dir, text=t("browse"), style="Secondary.TButton",
                    command=self._cmp_select_output).pack(side='right', padx=(6, 0))
         ttk.Label(inner,
-                  text="(defaults to first mouse's parent folder)",
+                  text=t("defaults_to_first_mouse"),
                   style="Sub.TLabel").pack(anchor='w', padx=px, pady=(2, 0))
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=8)
@@ -1542,7 +1540,7 @@ class HabitatApp(tk.Tk):
                 foreground=THEME["text"])
 
     def _select_csv_folder(self):
-        folder = filedialog.askdirectory(title="Sélectionner le dossier de l'animal")
+        folder = filedialog.askdirectory(title=t("dlg_select_folder"))
         if not folder:
             return
         files = sorted(
@@ -1552,7 +1550,7 @@ class HabitatApp(tk.Tk):
             and f.lower().endswith('.csv')
         )
         if not files:
-            messagebox.showwarning("Dossier vide", "Aucun fichier .csv trouvé dans ce dossier.")
+            messagebox.showwarning(t("warn_empty_folder"), t("warn_no_csv_in_folder"))
             return
         self.csv_files = files
         self.lst_csv.delete(0, 'end')
@@ -1625,15 +1623,14 @@ class HabitatApp(tk.Tk):
 
                 elif action == "disc_done":
                     if self.btn_disc_run:
-                        self.btn_disc_run.config(state='normal', text="▶  Run Discovery")
+                        self.btn_disc_run.config(state='normal', text=t("run_discovery"))
 
                 elif action == "disc_results":
                     self._show_discovery_results(task["text"], task["pdf_path"])
 
                 elif action == "jt_done":
                     if self.btn_jt_run:
-                        self.btn_jt_run.config(state='normal',
-                                               text="▶  Run Joint Clustering")
+                        self.btn_jt_run.config(state='normal', text=t("run_joint"))
 
                 elif action == "jt_results":
                     self._show_joint_results(
@@ -1644,16 +1641,14 @@ class HabitatApp(tk.Tk):
 
                 elif action == "cmp_done":
                     if self.btn_cmp_run:
-                        self.btn_cmp_run.config(state='normal',
-                                                text="▶  Run Comparative Analysis")
+                        self.btn_cmp_run.config(state='normal', text=t("run_comparative"))
 
                 elif action == "cmp_results":
                     self._show_comparative_results(task["summary"], task["pdf_path"])
 
                 elif action == "atl_done":
                     if self.btn_atl_run:
-                        self.btn_atl_run.config(state='normal',
-                                                text="▶  Run Atlas Comparison")
+                        self.btn_atl_run.config(state='normal', text=t("run_atlas"))
 
                 elif action == "atl_results":
                     self._show_atlas_results(task["summary"], task["pdf_path"])
@@ -2278,7 +2273,7 @@ class HabitatApp(tk.Tk):
                 foreground=THEME["text"])
 
     def _im_select_files_folder(self):
-        folder = filedialog.askdirectory(title="Sélectionner le dossier de l'animal")
+        folder = filedialog.askdirectory(title=t("dlg_select_folder"))
         if not folder:
             return
         files = sorted(
@@ -2288,7 +2283,7 @@ class HabitatApp(tk.Tk):
             and f.lower().endswith('.csv')
         )
         if not files:
-            messagebox.showwarning("Dossier vide", "Aucun fichier .csv trouvé dans ce dossier.")
+            messagebox.showwarning(t("warn_empty_folder"), t("warn_no_csv_in_folder"))
             return
         self._im_csv_files = files
         self._im_lst_csv.delete(0, 'end')
@@ -2493,11 +2488,11 @@ class HabitatApp(tk.Tk):
 
     def _show_comparative_results(self, summary, pdf_path):
         win = tk.Toplevel(self)
-        win.title("Comparative Analysis — Done")
+        win.title(t("wintitle_cmp_done"))
         win.configure(bg=THEME["bg"])
         win.geometry("500x200")
 
-        ttk.Label(win, text="Comparative Analysis complete",
+        ttk.Label(win, text=t("cmp_done_header"),
                   style="Section.TLabel").pack(pady=(18, 4))
         ttk.Label(win, text=summary,
                   style="Sub.TLabel", wraplength=460).pack(pady=4)
@@ -2506,15 +2501,15 @@ class HabitatApp(tk.Tk):
 
         btn_row = ttk.Frame(win)
         btn_row.pack(pady=12)
-        ttk.Button(btn_row, text="Open PDF",
+        ttk.Button(btn_row, text=t("open_pdf"),
                    style="Primary.TButton",
                    command=lambda: os.startfile(pdf_path)
                    ).pack(side='left', padx=8)
-        ttk.Button(btn_row, text="Open folder",
+        ttk.Button(btn_row, text=t("open_folder"),
                    style="Secondary.TButton",
                    command=lambda: os.startfile(os.path.dirname(pdf_path))
                    ).pack(side='left', padx=8)
-        ttk.Button(btn_row, text="Close",
+        ttk.Button(btn_row, text=t("close"),
                    style="Secondary.TButton",
                    command=win.destroy
                    ).pack(side='left', padx=8)
@@ -2541,21 +2536,18 @@ class HabitatApp(tk.Tk):
                     lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
 
         ttk.Label(inner,
-                  text="Atlas  —  Inter-Animal Habitat Comparison",
+                  text=t("atl_title"),
                   style="Section.TLabel").pack(anchor='w', **pad)
         ttk.Label(inner,
-                  text="Fits a single weighted GMM atlas (1/n_i per voxel) on the pooled "
-                       "cohort, then freezes it. Each mouse becomes a compositional vector "
-                       "π ∈ Δ^(K−1). Groups are compared via PERMANOVA, MMD, and Dirichlet "
-                       "regression. A multi-page PDF report is generated.",
+                  text=t("atl_desc"),
                   style="Sub.TLabel",
                   wraplength=520).pack(anchor='w', padx=px, pady=(0, 10))
 
         # ── Group names ──────────────────────────────────────────────────────
-        ttk.Label(inner, text="Group names",
+        ttk.Label(inner, text=t("group_names_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
         ttk.Label(inner,
-                  text="Each mouse card below is assigned to a group (0, 1, …).",
+                  text=t("group_names_desc"),
                   style="Sub.TLabel").pack(anchor='w', padx=px, pady=(0, 4))
 
         gnames_frame = ttk.Frame(inner, style="Card.TFrame")
@@ -2565,22 +2557,18 @@ class HabitatApp(tk.Tk):
 
         btn_row_g = ttk.Frame(inner)
         btn_row_g.pack(anchor='w', padx=px, pady=(0, 8))
-        ttk.Button(btn_row_g, text="+ Add group", style="Secondary.TButton",
+        ttk.Button(btn_row_g, text=t("add_group"), style="Secondary.TButton",
                    command=self._atl_add_group).pack(side='left', padx=(0, 4))
-        ttk.Button(btn_row_g, text="– Remove last group", style="Secondary.TButton",
+        ttk.Button(btn_row_g, text=t("remove_last_group"), style="Secondary.TButton",
                    command=self._atl_remove_group).pack(side='left')
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # ── Covariables ──────────────────────────────────────────────────────
-        ttk.Label(inner, text="Covariables  (optionnel — Dirichlet regression)",
+        ttk.Label(inner, text=t("covariables_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
         ttk.Label(inner,
-                  text="Définissez des covariables (sexe, date, régime…). "
-                       "Chaque souris aura un champ par covariable dans sa carte. "
-                       "Valeurs numériques : utilisées telles quelles. "
-                       "Dates (YYYY-MM-DD) : converties en jours depuis la plus ancienne. "
-                       "Texte (M/F, normal/gras…) : encodé en dummy 0/1.",
+                  text=t("covariables_desc"),
                   style="Sub.TLabel", wraplength=520).pack(anchor='w', padx=px, pady=(0, 4))
 
         covar_frame = ttk.Frame(inner, style="Card.TFrame")
@@ -2590,15 +2578,15 @@ class HabitatApp(tk.Tk):
 
         btn_row_cov = ttk.Frame(inner)
         btn_row_cov.pack(anchor='w', padx=px, pady=(0, 8))
-        ttk.Button(btn_row_cov, text="+ Ajouter covariable", style="Secondary.TButton",
+        ttk.Button(btn_row_cov, text=t("add_covar"), style="Secondary.TButton",
                    command=self._atl_add_covar).pack(side='left', padx=(0, 4))
-        ttk.Button(btn_row_cov, text="– Supprimer dernière", style="Secondary.TButton",
+        ttk.Button(btn_row_cov, text=t("remove_last_covar"), style="Secondary.TButton",
                    command=self._atl_remove_covar).pack(side='left')
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # ── Mouse list ───────────────────────────────────────────────────────
-        ttk.Label(inner, text="Mice  (CSV files + group assignment)",
+        ttk.Label(inner, text=t("mice_csv_group"),
                   style="Section.TLabel").pack(anchor='w', **pad)
 
         list_frame = ttk.Frame(inner, style="Card.TFrame")
@@ -2617,29 +2605,28 @@ class HabitatApp(tk.Tk):
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # ── Normalization ────────────────────────────────────────────────────
-        ttk.Label(inner, text="Normalization",
+        ttk.Label(inner, text=t("normalization_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
         ttk.Radiobutton(inner,
-                        text="Global robust  (recommended for inter-group comparison)",
+                        text=t("norm_global_robust"),
                         variable=self._atl_normalization,
                         value='robust_global').pack(anchor='w', padx=px + 4, pady=1)
         ttk.Radiobutton(inner,
-                        text="Per-mouse robust  (removes inter-mouse differences)",
+                        text=t("norm_permouse_robust"),
                         variable=self._atl_normalization,
                         value='robust').pack(anchor='w', padx=px + 4, pady=1)
         ttk.Radiobutton(inner,
-                        text="CL normalization  (requires contralateral ROI)",
+                        text=t("norm_cl"),
                         variable=self._atl_normalization,
                         value='cl').pack(anchor='w', padx=px + 4, pady=(1, 6))
         ttk.Label(inner,
-                  text="Global robust : un seul scaler sur tous les voxels poolés — "
-                       "préserve les différences biologiques entre groupes.",
+                  text=t("norm_global_robust_hint"),
                   style="Sub.TLabel", wraplength=500).pack(anchor='w', padx=px + 4, pady=(0, 6))
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # ── Atlas / K parameters ─────────────────────────────────────────────
-        ttk.Label(inner, text="Atlas parameters",
+        ttk.Label(inner, text=t("atl_params_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
 
         def arow(label, widget_fn):
@@ -2648,26 +2635,26 @@ class HabitatApp(tk.Tk):
             ttk.Label(f, text=label, width=34).pack(side='left')
             widget_fn(f)
 
-        arow("K min (BIC selection)",
+        arow(t("k_min_bic"),
              lambda f: ttk.Spinbox(f, from_=2, to=10,
                                     textvariable=self._atl_k_min,
                                     width=6).pack(side='left'))
-        arow("K max (BIC selection)",
+        arow(t("k_max_bic"),
              lambda f: ttk.Spinbox(f, from_=3, to=15,
                                     textvariable=self._atl_k_max,
                                     width=6).pack(side='left'))
-        arow("K override  (blank = auto BIC)",
+        arow(t("k_override_blank"),
              lambda f: ttk.Entry(f, textvariable=self._atl_k_override,
                                   width=6).pack(side='left'))
-        arow("GMM restarts (n_init)",
+        arow(t("gmm_restarts"),
              lambda f: ttk.Spinbox(f, from_=1, to=100,
                                     textvariable=self._atl_n_init,
                                     width=6).pack(side='left'))
-        arow("Bootstrap runs (stability check)",
+        arow(t("bootstrap_runs"),
              lambda f: ttk.Spinbox(f, from_=0, to=200,
                                     textvariable=self._atl_n_bootstrap,
                                     width=6).pack(side='left'))
-        arow("Permutations (PERMANOVA / PERMDISP)",
+        arow(t("permutations_label"),
              lambda f: ttk.Spinbox(f, from_=99, to=9999,
                                     textvariable=self._atl_n_perm,
                                     width=7).pack(side='left'))
@@ -2680,7 +2667,7 @@ class HabitatApp(tk.Tk):
 
         f_name = ttk.Frame(inner)
         f_name.pack(fill='x', padx=px, pady=3)
-        ttk.Label(f_name, text="Output folder name", width=34).pack(side='left')
+        ttk.Label(f_name, text=t("output_folder"), width=34).pack(side='left')
         ttk.Entry(f_name, textvariable=self._atl_output_name,
                   width=22).pack(side='left')
 
@@ -2691,7 +2678,7 @@ class HabitatApp(tk.Tk):
         ttk.Button(f_dir, text=t("browse"), style="Secondary.TButton",
                    command=self._atl_select_output).pack(side='right', padx=(6, 0))
         ttk.Label(inner,
-                  text="(defaults to first mouse's parent folder)",
+                  text=t("defaults_to_first_mouse"),
                   style="Sub.TLabel").pack(anchor='w', padx=px, pady=(2, 0))
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=8)
@@ -2708,7 +2695,7 @@ class HabitatApp(tk.Tk):
         for gi, gvar in enumerate(self._atl_group_names):
             row = ttk.Frame(frame)
             row.pack(fill='x', padx=4, pady=2)
-            ttk.Label(row, text=f"Group {gi} :", width=10).pack(side='left', padx=(4, 2))
+            ttk.Label(row, text=t("group_n_label", n=gi), width=10).pack(side='left', padx=(4, 2))
             ttk.Entry(row, textvariable=gvar, width=18).pack(side='left', padx=4)
 
     def _atl_add_group(self):
@@ -2738,13 +2725,13 @@ class HabitatApp(tk.Tk):
         for w in frame.winfo_children():
             w.destroy()
         if not self._atl_covar_names:
-            ttk.Label(frame, text="  (aucune covariable définie)",
+            ttk.Label(frame, text=t("no_covar_defined"),
                       style="Sub.TLabel").pack(anchor='w', padx=6, pady=4)
             return
         for j, cvar in enumerate(self._atl_covar_names):
             row = ttk.Frame(frame)
             row.pack(fill='x', padx=4, pady=2)
-            ttk.Label(row, text=f"Cov {j + 1} :", width=8).pack(side='left', padx=(4, 2))
+            ttk.Label(row, text=t("cov_n_label", n=j + 1), width=8).pack(side='left', padx=(4, 2))
             ttk.Entry(row, textvariable=cvar, width=20).pack(side='left', padx=4)
 
     def _atl_add_covar(self):
@@ -2821,7 +2808,7 @@ class HabitatApp(tk.Tk):
                    command=lambda a=animal: self._browse_animal_folder(a)
                    ).pack(side='left', padx=2)
 
-        ttk.Label(row1, text="Group:", style="Sub.TLabel").pack(side='left', padx=(10, 2))
+        ttk.Label(row1, text=t("group_label"), style="Sub.TLabel").pack(side='left', padx=(10, 2))
         n_groups = len(self._atl_group_names)
         ttk.Spinbox(row1, from_=0, to=max(n_groups - 1, 1),
                     textvariable=animal["group_var"],
@@ -2972,11 +2959,11 @@ class HabitatApp(tk.Tk):
 
     def _show_atlas_results(self, summary, pdf_path):
         win = tk.Toplevel(self)
-        win.title("Atlas Comparison — Done")
+        win.title(t("wintitle_atl_done"))
         win.configure(bg=THEME["bg"])
         win.geometry("580x220")
 
-        ttk.Label(win, text="Atlas comparison complete",
+        ttk.Label(win, text=t("atl_done_header"),
                   style="Section.TLabel").pack(pady=(18, 4))
         ttk.Label(win, text=summary,
                   style="Sub.TLabel", wraplength=540).pack(pady=4)
@@ -2985,15 +2972,15 @@ class HabitatApp(tk.Tk):
 
         btn_row = ttk.Frame(win)
         btn_row.pack(pady=12)
-        ttk.Button(btn_row, text="Open PDF",
+        ttk.Button(btn_row, text=t("open_pdf"),
                    style="Primary.TButton",
                    command=lambda: os.startfile(pdf_path)
                    ).pack(side='left', padx=8)
-        ttk.Button(btn_row, text="Open folder",
+        ttk.Button(btn_row, text=t("open_folder"),
                    style="Secondary.TButton",
                    command=lambda: os.startfile(os.path.dirname(pdf_path))
                    ).pack(side='left', padx=8)
-        ttk.Button(btn_row, text="Close",
+        ttk.Button(btn_row, text=t("close"),
                    style="Secondary.TButton",
                    command=win.destroy
                    ).pack(side='left', padx=8)
@@ -3313,16 +3300,15 @@ class HabitatApp(tk.Tk):
                     lambda e: canvas.yview_scroll(int(-1*(e.delta/120)), "units"))
 
         ttk.Label(inner,
-                  text="Empirical Multi-Mouse Habitat Discovery",
+                  text=t("disc_title"),
                   style="Section.TLabel").pack(anchor='w', **pad)
         ttk.Label(inner,
-                  text="Segments each mouse independently, then discovers common patterns "
-                       "across animals — no prior label is used during grouping.",
+                  text=t("disc_desc"),
                   style="Sub.TLabel",
                   wraplength=520).pack(anchor='w', padx=px, pady=(0, 8))
 
         # ── Animal list ───────────────────────────────────────────────
-        ttk.Label(inner, text="Mice  (select raw MRI CSV files per animal)",
+        ttk.Label(inner, text=t("mice_per_animal"),
                   style="Section.TLabel").pack(anchor='w', **pad)
 
         list_frame = ttk.Frame(inner, style="Card.TFrame")
@@ -3341,7 +3327,7 @@ class HabitatApp(tk.Tk):
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # ── Segmentation settings ─────────────────────────────────────
-        ttk.Label(inner, text="Segmentation  (same method applied to every mouse)",
+        ttk.Label(inner, text=t("segmentation_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
 
         for val, key in [("gmm", "gmm_desc"), ("kmeans", "kmeans_desc")]:
@@ -3350,7 +3336,7 @@ class HabitatApp(tk.Tk):
                             value=val).pack(anchor='w', padx=px+4, pady=1)
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
-        ttk.Label(inner, text="Parameters", style="Sub.TLabel").pack(anchor='w', padx=px)
+        ttk.Label(inner, text=t("parameters_section"), style="Sub.TLabel").pack(anchor='w', padx=px)
 
         def drow(label, widget_fn):
             f = ttk.Frame(inner)
@@ -3358,7 +3344,7 @@ class HabitatApp(tk.Tk):
             ttk.Label(f, text=label, width=30).pack(side='left')
             widget_fn(f)
 
-        drow("Max clusters per mouse (K max)",
+        drow(t("k_max_per_mouse"),
              lambda f: ttk.Spinbox(f, from_=2, to=10,
                                    textvariable=self._disc_k_max,
                                    width=6).pack(side='left'))
@@ -3370,10 +3356,10 @@ class HabitatApp(tk.Tk):
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # ── Meta-clustering settings ───────────────────────────────────
-        ttk.Label(inner, text="Meta-clustering  (groups similar clusters across mice)",
+        ttk.Label(inner, text=t("meta_clustering_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
 
-        drow("Force number of meta-habitats (0 = auto)",
+        drow(t("force_meta_k"),
              lambda f: ttk.Spinbox(f, from_=0, to=15,
                                    textvariable=self._disc_meta_k,
                                    width=6).pack(side='left'))
@@ -3400,15 +3386,13 @@ class HabitatApp(tk.Tk):
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # ── Section : Comparaison de groupes ──────────────────────────
-        ttk.Label(inner, text="Comparaison de groupes  (optionnel)",
+        ttk.Label(inner, text=t("group_compare_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
         ttk.Label(inner,
-                  text="Activez pour assigner chaque souris à un groupe. "
-                       "Après le clustering, les proportions d'habitats (π) "
-                       "sont comparées entre groupes via Mann-Whitney.",
+                  text=t("group_compare_desc"),
                   style="Sub.TLabel", wraplength=510).pack(anchor='w', padx=px, pady=(0, 4))
         ttk.Checkbutton(inner,
-                        text="Activer la comparaison de groupes",
+                        text=t("enable_group_compare"),
                         variable=self._disc_compare_enabled,
                         command=self._disc_toggle_compare
                         ).pack(anchor='w', padx=px + 4, pady=(0, 4))
@@ -3433,13 +3417,13 @@ class HabitatApp(tk.Tk):
         for w in f.winfo_children():
             w.destroy()
         if not self._disc_compare_enabled.get():
-            ttk.Label(f, text="  (comparaison désactivée)",
+            ttk.Label(f, text=t("compare_disabled"),
                       style="Sub.TLabel").pack(anchor='w', padx=6, pady=4)
             return
         for gi, gvar in enumerate(self._disc_group_names):
             row = ttk.Frame(f)
             row.pack(fill='x', padx=4, pady=2)
-            ttk.Label(row, text=f"Groupe {gi} :", width=10).pack(side='left', padx=(4, 2))
+            ttk.Label(row, text=t("group_n_label", n=gi), width=10).pack(side='left', padx=(4, 2))
             ttk.Entry(row, textvariable=gvar, width=18).pack(side='left', padx=4)
 
     # ── Animal card helpers ───────────────────────────────────────────
@@ -3484,7 +3468,7 @@ class HabitatApp(tk.Tk):
                    ).pack(side='left', padx=2)
 
         if self._disc_compare_enabled.get():
-            ttk.Label(card, text="Groupe:", style="Sub.TLabel").pack(side='left', padx=(10, 2))
+            ttk.Label(card, text=t("group_label"), style="Sub.TLabel").pack(side='left', padx=(10, 2))
             gvar = animal.setdefault("group_var", tk.IntVar(value=0))
             ttk.Spinbox(card, from_=0, to=max(len(self._disc_group_names) - 1, 1),
                         textvariable=gvar, width=4).pack(side='left', padx=2)
@@ -3507,7 +3491,7 @@ class HabitatApp(tk.Tk):
 
     def _browse_animal_folder(self, animal):
         """Shared folder-browse for all per-animal cards: picks all .csv files directly inside the chosen folder."""
-        folder = filedialog.askdirectory(title="Sélectionner le dossier de l'animal")
+        folder = filedialog.askdirectory(title=t("dlg_select_folder"))
         if not folder:
             return
         files = sorted(
@@ -3517,7 +3501,7 @@ class HabitatApp(tk.Tk):
             and f.lower().endswith('.csv')
         )
         if not files:
-            messagebox.showwarning("Dossier vide", "Aucun fichier .csv trouvé dans ce dossier.")
+            messagebox.showwarning(t("warn_empty_folder"), t("warn_no_csv_in_folder"))
             return
         animal["files"] = files
         if animal.get("_lbl"):
@@ -3948,17 +3932,15 @@ class HabitatApp(tk.Tk):
                     lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
 
         ttk.Label(inner,
-                  text="Joint Multi-Mouse Clustering",
+                  text=t("jt_title"),
                   style="Section.TLabel").pack(anchor='w', **pad)
         ttk.Label(inner,
-                  text="Pool all voxels from N mice (per-mouse robust normalization), run one clustering "
-                       "to discover universal habitats that span all animals simultaneously. "
-                       "Same color = same habitat across every mouse.",
+                  text=t("jt_desc"),
                   style="Sub.TLabel",
                   wraplength=520).pack(anchor='w', padx=px, pady=(0, 10))
 
         # ── Mouse list ───────────────────────────────────────────────
-        ttk.Label(inner, text="Mice  (select raw MRI CSV files per mouse)",
+        ttk.Label(inner, text=t("mice_raw_csv"),
                   style="Section.TLabel").pack(anchor='w', **pad)
 
         list_frame = ttk.Frame(inner, style="Card.TFrame")
@@ -3977,42 +3959,38 @@ class HabitatApp(tk.Tk):
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # ── Normalization ─────────────────────────────────────────────
-        ttk.Label(inner, text="Normalization",
+        ttk.Label(inner, text=t("normalization_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
 
         ttk.Radiobutton(
             inner,
-            text="Per-mouse robust  —  0 = each mouse's tumor median  (recommended)",
+            text=t("norm_robust_jt_radio"),
             variable=self._jt_normalization,
             value='robust'
         ).pack(anchor='w', padx=px + 4, pady=1)
         ttk.Label(inner,
-                  text="Each mouse is scaled by its own tumor median/IQR before pooling. "
-                       "Preserves intra-mouse heterogeneity; best results for cross-animal clustering.",
+                  text=t("norm_robust_jt_hint"),
                   style="Sub.TLabel", wraplength=500
                   ).pack(anchor='w', padx=px + 22, pady=(0, 6))
 
         ttk.Radiobutton(
             inner,
-            text="CL normalization  —  0 = contralateral tissue",
+            text=t("norm_cl_jt_radio"),
             variable=self._jt_normalization,
             value='cl'
         ).pack(anchor='w', padx=px + 4, pady=1)
         ttk.Label(inner,
-                  text="Each parameter is scaled by its own CL median/IQR. "
-                       "Requires a contralateral ROI; inter-session variability (e.g. MTR) "
-                       "can degrade pooled clustering quality.",
+                  text=t("norm_cl_jt_hint"),
                   style="Sub.TLabel", wraplength=500
                   ).pack(anchor='w', padx=px + 22, pady=(0, 6))
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # ── Clustering method ────────────────────────────────────────
-        ttk.Label(inner, text="Clustering method",
+        ttk.Label(inner, text=t("method_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
         ttk.Label(inner,
-                  text="SRSC is not available for joint clustering (spatial coordinates "
-                       "are per-mouse and cannot be pooled across animals).",
+                  text=t("srsc_unavailable"),
                   style="Sub.TLabel",
                   wraplength=520).pack(anchor='w', padx=px, pady=(0, 4))
 
@@ -4031,7 +4009,7 @@ class HabitatApp(tk.Tk):
         k_frame = ttk.Frame(params_area)
         self._jt_k_params_frame = k_frame
 
-        ttk.Label(k_frame, text="K selection parameters",
+        ttk.Label(k_frame, text=t("k_params_section"),
                   style="Sub.TLabel").pack(anchor='w', padx=px)
 
         def jrow(label, widget_fn, parent=None):
@@ -4041,11 +4019,11 @@ class HabitatApp(tk.Tk):
             ttk.Label(f, text=label, width=30).pack(side='left')
             widget_fn(f)
 
-        jrow("Min clusters (K min)",
+        jrow(t("k_min_label"),
              lambda f: ttk.Spinbox(f, from_=2, to=10,
                                     textvariable=self._jt_k_min,
                                     width=6).pack(side='left'))
-        jrow("Max clusters (K max)",
+        jrow(t("k_max_label"),
              lambda f: ttk.Spinbox(f, from_=3, to=15,
                                     textvariable=self._jt_k_max,
                                     width=6).pack(side='left'))
@@ -4076,7 +4054,7 @@ class HabitatApp(tk.Tk):
         # ── d_topo spatial feature ───────────────────────────────────
         hdr_f = ttk.Frame(inner)
         hdr_f.pack(fill='x', padx=px, pady=(4, 0))
-        ttk.Label(hdr_f, text="d_topo spatial feature",
+        ttk.Label(hdr_f, text=t("dtopo_section"),
                   style="Section.TLabel").pack(side='left')
         ttk.Button(hdr_f, text="?", width=2,
                    style="Secondary.TButton",
@@ -4089,22 +4067,21 @@ class HabitatApp(tk.Tk):
             widget_fn(f)
 
         dtopo_row(
-            "Weight  (0 = off, 1 = equal to MRI)",
+            t("dtopo_weight_label"),
             lambda f: ttk.Spinbox(
                 f, from_=0.0, to=1.0, increment=0.05, format="%.2f",
                 textvariable=self._jt_dtopo_weight, width=7
             ).pack(side='left'))
 
         dtopo_row(
-            "Min necrosis fraction  (%)",
+            t("dtopo_min_frac_label"),
             lambda f: ttk.Spinbox(
                 f, from_=1, to=30, increment=1,
                 textvariable=self._jt_dtopo_min_frac_pct, width=7
             ).pack(side='left'))
 
         ttk.Label(inner,
-                  text="Mice with necrosis below the threshold receive d_topo = 0 "
-                       "(MRI features only). See '?' for details.",
+                  text=t("dtopo_hint"),
                   style="Sub.TLabel", wraplength=500
                   ).pack(anchor='w', padx=px, pady=(0, 4))
 
@@ -4130,15 +4107,13 @@ class HabitatApp(tk.Tk):
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # ── Section : Comparaison de groupes ──────────────────────────
-        ttk.Label(inner, text="Comparaison de groupes  (optionnel)",
+        ttk.Label(inner, text=t("group_compare_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
         ttk.Label(inner,
-                  text="Activez pour assigner chaque souris à un groupe. "
-                       "Après le clustering joint, les proportions d'habitats (π) "
-                       "sont comparées entre groupes via Mann-Whitney.",
+                  text=t("group_compare_desc_jt"),
                   style="Sub.TLabel", wraplength=510).pack(anchor='w', padx=px, pady=(0, 4))
         ttk.Checkbutton(inner,
-                        text="Activer la comparaison de groupes",
+                        text=t("enable_group_compare"),
                         variable=self._jt_compare_enabled,
                         command=self._jt_toggle_compare
                         ).pack(anchor='w', padx=px + 4, pady=(0, 4))
@@ -4163,13 +4138,13 @@ class HabitatApp(tk.Tk):
         for w in f.winfo_children():
             w.destroy()
         if not self._jt_compare_enabled.get():
-            ttk.Label(f, text="  (comparaison désactivée)",
+            ttk.Label(f, text=t("compare_disabled"),
                       style="Sub.TLabel").pack(anchor='w', padx=6, pady=4)
             return
         for gi, gvar in enumerate(self._jt_group_names):
             row = ttk.Frame(f)
             row.pack(fill='x', padx=4, pady=2)
-            ttk.Label(row, text=f"Groupe {gi} :", width=10).pack(side='left', padx=(4, 2))
+            ttk.Label(row, text=t("group_n_label", n=gi), width=10).pack(side='left', padx=(4, 2))
             ttk.Entry(row, textvariable=gvar, width=18).pack(side='left', padx=4)
 
     # ── Animal card helpers ──────────────────────────────────────────
@@ -4214,7 +4189,7 @@ class HabitatApp(tk.Tk):
                    ).pack(side='left', padx=2)
 
         if self._jt_compare_enabled.get():
-            ttk.Label(card, text="Groupe:", style="Sub.TLabel").pack(side='left', padx=(10, 2))
+            ttk.Label(card, text=t("group_label"), style="Sub.TLabel").pack(side='left', padx=(10, 2))
             gvar = animal.setdefault("group_var", tk.IntVar(value=0))
             ttk.Spinbox(card, from_=0, to=max(len(self._jt_group_names) - 1, 1),
                         textvariable=gvar, width=4).pack(side='left', padx=2)
@@ -4466,7 +4441,7 @@ class HabitatApp(tk.Tk):
                              dtopo_report=None, dtopo_weight=1.0,
                              dtopo_min_frac=0.05):
         win = tk.Toplevel(self)
-        win.title("Joint Clustering Results")
+        win.title(t("wintitle_jt_results"))
         win.geometry("820x640")
         win.configure(bg=THEME["bg"])
         win.lift()
@@ -4476,7 +4451,7 @@ class HabitatApp(tk.Tk):
 
         # ── Tab 1 — summary text ────────────────────────────────────────
         tab_text = ttk.Frame(nb)
-        nb.add(tab_text, text="Summary")
+        nb.add(tab_text, text=t("tab_summary"))
 
         txt = scrolledtext.ScrolledText(
             tab_text,
@@ -4495,25 +4470,23 @@ class HabitatApp(tk.Tk):
 
         # ── Tab 2 — output folder ───────────────────────────────────────
         tab_out = ttk.Frame(nb)
-        nb.add(tab_out, text="Output folder")
-        ttk.Label(tab_out, text="Results saved to:",
+        nb.add(tab_out, text=t("tab_output_folder"))
+        ttk.Label(tab_out, text=t("results_saved_to"),
                   style="Sub.TLabel").pack(anchor='w', padx=16, pady=(16, 4))
         ttk.Label(tab_out, text=output_dir,
                   style="Sub.TLabel", wraplength=700).pack(anchor='w', padx=16)
-        ttk.Button(tab_out, text="Open folder",
+        ttk.Button(tab_out, text=t("open_folder"),
                    style="Primary.TButton",
                    command=lambda: os.startfile(output_dir)
                    ).pack(padx=16, pady=12)
         ttk.Label(tab_out,
-                  text="Contents: per-mouse folders (habitats_result.csv, "
-                       "segmentation maps), global centroids.json, "
-                       "joint_profiles.png, K-selection charts.",
+                  text=t("jt_output_contents"),
                   style="Sub.TLabel",
                   wraplength=680).pack(anchor='w', padx=16)
 
         # ── Tab 3 — d_topo impact ───────────────────────────────────────
         tab_dtopo = ttk.Frame(nb)
-        nb.add(tab_dtopo, text="ℹ d_topo impact")
+        nb.add(tab_dtopo, text=t("tab_dtopo_impact"))
 
         canvas = tk.Canvas(tab_dtopo, bg=THEME["bg"], highlightthickness=0)
         sb     = ttk.Scrollbar(tab_dtopo, orient='vertical', command=canvas.yview)
@@ -4531,7 +4504,7 @@ class HabitatApp(tk.Tk):
         px = 16
 
         # — What is d_topo? —
-        tk.Label(inner, text="What is d_topo_norm?",
+        tk.Label(inner, text=t("dtopo_what_title"),
                  font=(THEME["font_family"], 11, "bold"),
                  bg=THEME["bg"], fg=THEME["text"]
                  ).pack(anchor='w', padx=px, pady=(14, 2))
@@ -4550,7 +4523,7 @@ class HabitatApp(tk.Tk):
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # — Current settings —
-        tk.Label(inner, text="Current settings",
+        tk.Label(inner, text=t("dtopo_settings_title"),
                  font=(THEME["font_family"], 11, "bold"),
                  bg=THEME["bg"], fg=THEME["text"]
                  ).pack(anchor='w', padx=px, pady=(4, 2))
@@ -4565,27 +4538,27 @@ class HabitatApp(tk.Tk):
                  font=("Courier", 9), bg=THEME["bg"], fg=THEME["text_sub"]
                  ).pack(anchor='w', padx=px, pady=(0, 4))
 
-        tk.Label(inner, text="Adjust DTOPO_JOINT_WEIGHT and DTOPO_MIN_NECROSIS_FRACTION in config.py.",
+        tk.Label(inner, text=t("dtopo_adjust_hint"),
                  font=THEME["font_small"], bg=THEME["bg"], fg=THEME["accent"]
                  ).pack(anchor='w', padx=px, pady=(0, 8))
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # — Per-mouse decision table —
-        tk.Label(inner, text="Per-mouse d_topo decision",
+        tk.Label(inner, text=t("dtopo_per_mouse_title"),
                  font=(THEME["font_family"], 11, "bold"),
                  bg=THEME["bg"], fg=THEME["text"]
                  ).pack(anchor='w', padx=px, pady=(4, 6))
 
         if not dtopo_report:
-            tk.Label(inner, text="  d_topo was not activated (global necrosis guard did not pass).",
+            tk.Label(inner, text=t("dtopo_not_activated"),
                      font=THEME["font_small"], bg=THEME["bg"], fg=THEME["text_sub"]
                      ).pack(anchor='w', padx=px)
         else:
             # Header row
             hdr = ttk.Frame(inner)
             hdr.pack(fill='x', padx=px, pady=(0, 2))
-            for txt_h, w in [("Mouse", 28), ("Necrosis %", 10),
+            for txt_h, w in [(t("dtopo_table_mouse"), 28), (t("dtopo_table_necro"), 10),
                               ("d_topo", 8), ("Reason", 42)]:
                 tk.Label(hdr, text=txt_h, width=w, anchor='w',
                          font=(THEME["font_family"], 9, "bold"),
@@ -4600,7 +4573,7 @@ class HabitatApp(tk.Tk):
 
                 included = info['included']
                 pct      = f"{100*info['fraction']:.1f}%"
-                status   = "✔ included" if included else "✘ skipped"
+                status   = t("dtopo_included") if included else t("dtopo_skipped")
                 s_color  = THEME["log_ok"] if included else THEME["log_err"]
 
                 short_mouse = mouse[:27] + "…" if len(mouse) > 28 else mouse
@@ -4622,7 +4595,7 @@ class HabitatApp(tk.Tk):
         ttk.Separator(inner).pack(fill='x', padx=px, pady=8)
 
         # — Interpretation guide —
-        tk.Label(inner, text="How to interpret the results",
+        tk.Label(inner, text=t("dtopo_interp_title"),
                  font=(THEME["font_family"], 11, "bold"),
                  bg=THEME["bg"], fg=THEME["text"]
                  ).pack(anchor='w', padx=px, pady=(0, 4))
@@ -4640,7 +4613,7 @@ class HabitatApp(tk.Tk):
                      "per-mouse parallel coordinates and deviation heatmap."
                  )).pack(anchor='w', padx=px, pady=(0, 14))
 
-        ttk.Button(win, text="Close", style="Secondary.TButton",
+        ttk.Button(win, text=t("close"), style="Secondary.TButton",
                    command=win.destroy).pack(pady=(0, 8))
 
     # ------------------------------------------------------------------
@@ -4649,7 +4622,7 @@ class HabitatApp(tk.Tk):
 
     def _show_discovery_results(self, text: str, pdf_path: str):
         win = tk.Toplevel(self)
-        win.title("Discovery Results")
+        win.title(t("wintitle_disc_results"))
         win.geometry("780x620")
         win.configure(bg=THEME["bg"])
         win.lift()
@@ -4659,7 +4632,7 @@ class HabitatApp(tk.Tk):
 
         # Tab 1: explanation text
         tab_text = ttk.Frame(nb)
-        nb.add(tab_text, text="Explanation")
+        nb.add(tab_text, text=t("tab_explanation"))
 
         txt = scrolledtext.ScrolledText(
             tab_text,
@@ -4679,18 +4652,18 @@ class HabitatApp(tk.Tk):
 
         # Tab 2: figures (open PDF)
         tab_fig = ttk.Frame(nb)
-        nb.add(tab_fig, text="Figures (PDF)")
-        ttk.Label(tab_fig, text="PDF report with all figures:",
+        nb.add(tab_fig, text=t("tab_figures_pdf"))
+        ttk.Label(tab_fig, text=t("pdf_report_with_figs"),
                   style="Sub.TLabel").pack(anchor='w', padx=16, pady=(16, 4))
         ttk.Label(tab_fig, text=pdf_path,
                   style="Sub.TLabel", wraplength=700).pack(anchor='w', padx=16)
-        ttk.Button(tab_fig, text="Open PDF",
+        ttk.Button(tab_fig, text=t("open_pdf"),
                    style="Primary.TButton",
                    command=lambda: os.startfile(pdf_path)
                    ).pack(padx=16, pady=12)
 
         # Bottom: close
-        ttk.Button(win, text="Close", style="Secondary.TButton",
+        ttk.Button(win, text=t("close"), style="Secondary.TButton",
                    command=win.destroy).pack(pady=(0, 8))
 
 # =================================================================

@@ -597,6 +597,339 @@ _TR = {
         "en": "FA clearly above median (pos={pos:.2f}) — Jellison pattern 3",
         "fr": "FA nettement au-dessus de la médiane (pos={pos:.2f}) — pattern Jellison 3",
         "es": "FA claramente por encima de la mediana (pos={pos:.2f}) — patrón Jellison 3"},
+
+    # ── Tab names (new tabs) ─────────────────────────────────────────────────
+    "tab_clustering"    : {"en": "Clustering",     "fr": "Clustering",     "es": "Clustering"},
+    "tab_discovery"     : {"en": "Discovery",      "fr": "Découverte",     "es": "Descubrimiento"},
+    "tab_joint"         : {"en": "Joint",          "fr": "Joint",          "es": "Conjunto"},
+    "tab_compare"       : {"en": "Compare",        "fr": "Comparer",       "es": "Comparar"},
+    "tab_atlas"         : {"en": "Atlas",          "fr": "Atlas",          "es": "Atlas"},
+
+    # ── Run buttons (new tabs) ───────────────────────────────────────────────
+    "run_discovery"     : {"en": "▶  Run Discovery",
+                           "fr": "▶  Lancer la découverte",
+                           "es": "▶  Ejecutar descubrimiento"},
+    "run_joint"         : {"en": "▶  Run Joint Clustering",
+                           "fr": "▶  Lancer le clustering joint",
+                           "es": "▶  Ejecutar clustering conjunto"},
+    "run_comparative"   : {"en": "▶  Run Comparative Analysis",
+                           "fr": "▶  Lancer l'analyse comparative",
+                           "es": "▶  Ejecutar análisis comparativo"},
+    "run_atlas"         : {"en": "▶  Run Atlas Comparison",
+                           "fr": "▶  Lancer la comparaison Atlas",
+                           "es": "▶  Ejecutar comparación Atlas"},
+
+    # ── Compare tab ──────────────────────────────────────────────────────────
+    "cmp_title"         : {"en": "Comparative Analysis  —  Classic | Discovery | Joint",
+                           "fr": "Analyse Comparative  —  Classic | Découverte | Joint",
+                           "es": "Análisis Comparativo  —  Clásico | Descubrimiento | Conjunto"},
+    "cmp_desc"          : {"en": "Select the raw MRI CSV files for each mouse. "
+                                  "All three methods run on the same cohort and the "
+                                  "results are saved as a multi-page PDF.",
+                           "fr": "Sélectionnez les fichiers CSV IRM bruts de chaque souris. "
+                                  "Les trois méthodes s'exécutent sur la même cohorte et les "
+                                  "résultats sont enregistrés dans un PDF multi-pages.",
+                           "es": "Seleccione los archivos CSV IRM brutos de cada ratón. "
+                                  "Los tres métodos se ejecutan sobre la misma cohorte y los "
+                                  "resultados se guardan en un PDF de varias páginas."},
+    "mice_raw_csv"      : {"en": "Mice  (select raw MRI CSV files per mouse)",
+                           "fr": "Souris  (sélectionner les fichiers CSV IRM bruts par souris)",
+                           "es": "Ratones  (seleccionar archivos CSV IRM brutos por ratón)"},
+    "joint_norm_section": {"en": "Joint normalization",
+                           "fr": "Normalisation conjointe",
+                           "es": "Normalización conjunta"},
+    "norm_robust"       : {"en": "Per-mouse robust  (recommended)",
+                           "fr": "Robuste par souris  (recommandé)",
+                           "es": "Robusto por ratón  (recomendado)"},
+    "norm_cl"           : {"en": "CL normalization  (requires contralateral ROI)",
+                           "fr": "Normalisation CL  (nécessite une ROI controlatérale)",
+                           "es": "Normalización CL  (requiere ROI contralateral)"},
+    "k_params_section"  : {"en": "K selection parameters",
+                           "fr": "Paramètres de sélection K",
+                           "es": "Parámetros de selección K"},
+    "k_min_label"       : {"en": "Min clusters (K min)",
+                           "fr": "Clusters min (K min)",
+                           "es": "Clusters mín (K min)"},
+    "k_max_label"       : {"en": "Max clusters (K max)",
+                           "fr": "Clusters max (K max)",
+                           "es": "Clusters máx (K max)"},
+    "pdf_name_label"    : {"en": "PDF name",          "fr": "Nom du PDF",          "es": "Nombre del PDF"},
+    "defaults_to_first_mouse": {
+        "en": "(defaults to first mouse's parent folder)",
+        "fr": "(par défaut : dossier parent de la première souris)",
+        "es": "(por defecto: carpeta padre del primer ratón)"},
+
+    # ── Discovery tab ────────────────────────────────────────────────────────
+    "disc_title"        : {"en": "Empirical Multi-Mouse Habitat Discovery",
+                           "fr": "Découverte Empirique des Habitats Multi-Souris",
+                           "es": "Descubrimiento Empírico de Hábitats Multi-Ratón"},
+    "disc_desc"         : {"en": "Segments each mouse independently, then discovers common "
+                                  "patterns across animals — no prior label is used during grouping.",
+                           "fr": "Segmente chaque souris indépendamment, puis découvre les motifs "
+                                  "communs entre animaux — aucune étiquette préalable n'est utilisée "
+                                  "lors du regroupement.",
+                           "es": "Segmenta cada ratón de forma independiente, luego descubre patrones "
+                                  "comunes entre animales — no se usa ninguna etiqueta previa durante "
+                                  "el agrupamiento."},
+    "mice_per_animal"   : {"en": "Mice  (select raw MRI CSV files per animal)",
+                           "fr": "Souris  (sélectionner les fichiers CSV IRM bruts par animal)",
+                           "es": "Ratones  (seleccionar archivos CSV IRM brutos por animal)"},
+    "segmentation_section": {
+        "en": "Segmentation  (same method applied to every mouse)",
+        "fr": "Segmentation  (même méthode appliquée à chaque souris)",
+        "es": "Segmentación  (mismo método aplicado a cada ratón)"},
+    "k_max_per_mouse"   : {"en": "Max clusters per mouse (K max)",
+                           "fr": "Clusters max par souris (K max)",
+                           "es": "Clusters máx por ratón (K max)"},
+    "meta_clustering_section": {
+        "en": "Meta-clustering  (groups similar clusters across mice)",
+        "fr": "Méta-clustering  (groupe les clusters similaires entre souris)",
+        "es": "Metaclustering  (agrupa clusters similares entre ratones)"},
+    "force_meta_k"      : {"en": "Force number of meta-habitats (0 = auto)",
+                           "fr": "Forcer le nombre de méta-habitats (0 = auto)",
+                           "es": "Forzar número de meta-hábitats (0 = auto)"},
+
+    # ── Group comparison (Discovery & Joint) ─────────────────────────────────
+    "group_compare_section": {
+        "en": "Group comparison  (optional)",
+        "fr": "Comparaison de groupes  (optionnel)",
+        "es": "Comparación de grupos  (opcional)"},
+    "group_compare_desc": {
+        "en": "Activate to assign each mouse to a group. After clustering, habitat "
+               "proportions (π) are compared between groups via Mann-Whitney.",
+        "fr": "Activez pour assigner chaque souris à un groupe. Après le clustering, "
+               "les proportions d'habitats (π) sont comparées entre groupes via Mann-Whitney.",
+        "es": "Active para asignar cada ratón a un grupo. Tras el clustering, las proporciones "
+               "de hábitats (π) se comparan entre grupos mediante Mann-Whitney."},
+    "group_compare_desc_jt": {
+        "en": "Activate to assign each mouse to a group. After joint clustering, habitat "
+               "proportions (π) are compared between groups via Mann-Whitney.",
+        "fr": "Activez pour assigner chaque souris à un groupe. Après le clustering joint, "
+               "les proportions d'habitats (π) sont comparées entre groupes via Mann-Whitney.",
+        "es": "Active para asignar cada ratón a un grupo. Tras el clustering conjunto, las "
+               "proporciones de hábitats (π) se comparan entre grupos mediante Mann-Whitney."},
+    "enable_group_compare": {
+        "en": "Enable group comparison",
+        "fr": "Activer la comparaison de groupes",
+        "es": "Activar comparación de grupos"},
+    "compare_disabled"  : {"en": "  (comparison disabled)",
+                           "fr": "  (comparaison désactivée)",
+                           "es": "  (comparación desactivada)"},
+    "group_n_label"     : {"en": "Group {n}:",   "fr": "Groupe {n} :", "es": "Grupo {n}:"},
+    "group_label"       : {"en": "Group:",        "fr": "Groupe :",     "es": "Grupo:"},
+    "cov_n_label"       : {"en": "Cov {n}:",     "fr": "Cov {n} :",    "es": "Cov {n}:"},
+
+    # ── Folder browse ────────────────────────────────────────────────────────
+    "dlg_select_folder" : {"en": "Select the animal's folder",
+                           "fr": "Sélectionner le dossier de l'animal",
+                           "es": "Seleccionar la carpeta del animal"},
+    "warn_empty_folder" : {"en": "Empty folder",    "fr": "Dossier vide",    "es": "Carpeta vacía"},
+    "warn_no_csv_in_folder": {
+        "en": "No .csv file found in this folder.",
+        "fr": "Aucun fichier .csv trouvé dans ce dossier.",
+        "es": "No se encontró ningún archivo .csv en esta carpeta."},
+
+    # ── Atlas tab ────────────────────────────────────────────────────────────
+    "atl_title"         : {"en": "Atlas  —  Inter-Animal Habitat Comparison",
+                           "fr": "Atlas  —  Comparaison des Habitats Inter-Animal",
+                           "es": "Atlas  —  Comparación de Hábitats Inter-Animal"},
+    "atl_desc"          : {
+        "en": "Fits a single weighted GMM atlas (1/n_i per voxel) on the pooled cohort, "
+               "then freezes it. Each mouse becomes a compositional vector π ∈ Δ^(K−1). "
+               "Groups are compared via PERMANOVA, MMD, and Dirichlet regression. "
+               "A multi-page PDF report is generated.",
+        "fr": "Ajuste un atlas GMM pondéré unique (1/n_i par voxel) sur la cohorte poolée, "
+               "puis le fige. Chaque souris devient un vecteur compositionnel π ∈ Δ^(K−1). "
+               "Les groupes sont comparés via PERMANOVA, MMD et régression de Dirichlet. "
+               "Un rapport PDF multi-pages est généré.",
+        "es": "Ajusta un atlas GMM ponderado único (1/n_i por vóxel) en la cohorte agrupada "
+               "y lo congela. Cada ratón se convierte en un vector composicional π ∈ Δ^(K−1). "
+               "Los grupos se comparan mediante PERMANOVA, MMD y regresión de Dirichlet. "
+               "Se genera un informe PDF de varias páginas."},
+    "group_names_section": {"en": "Group names",    "fr": "Noms des groupes",    "es": "Nombres de grupos"},
+    "group_names_desc"  : {
+        "en": "Each mouse card below is assigned to a group (0, 1, …).",
+        "fr": "Chaque carte souris ci-dessous est assignée à un groupe (0, 1, …).",
+        "es": "Cada tarjeta de ratón a continuación está asignada a un grupo (0, 1, …)."},
+    "add_group"         : {"en": "+ Add group",         "fr": "+ Ajouter groupe",         "es": "+ Añadir grupo"},
+    "remove_last_group" : {"en": "– Remove last group", "fr": "– Supprimer dernier groupe", "es": "– Eliminar último grupo"},
+    "covariables_section": {
+        "en": "Covariables  (optional — Dirichlet regression)",
+        "fr": "Covariables  (optionnel — régression de Dirichlet)",
+        "es": "Covariables  (opcional — regresión de Dirichlet)"},
+    "covariables_desc"  : {
+        "en": "Define covariables (sex, date, diet…). Each mouse will have one field per "
+               "covariable. Numeric values: used as-is. Dates (YYYY-MM-DD): converted to days "
+               "since oldest. Text (M/F, normal/high-fat…): dummy-encoded 0/1.",
+        "fr": "Définissez des covariables (sexe, date, régime…). Chaque souris aura un champ "
+               "par covariable. Valeurs numériques : utilisées telles quelles. "
+               "Dates (YYYY-MM-DD) : converties en jours depuis la plus ancienne. "
+               "Texte (M/F, normal/gras…) : encodé en dummy 0/1.",
+        "es": "Defina covariables (sexo, fecha, dieta…). Cada ratón tendrá un campo por "
+               "covariable. Valores numéricos: se usan tal cual. Fechas (YYYY-MM-DD): "
+               "convertidas a días desde la más antigua. Texto (M/H, normal/grasa…): "
+               "codificado en dummy 0/1."},
+    "add_covar"         : {"en": "+ Add covariable",  "fr": "+ Ajouter covariable",  "es": "+ Añadir covariable"},
+    "remove_last_covar" : {"en": "– Remove last",     "fr": "– Supprimer dernière",  "es": "– Eliminar última"},
+    "mice_csv_group"    : {"en": "Mice  (CSV files + group assignment)",
+                           "fr": "Souris  (fichiers CSV + assignation de groupe)",
+                           "es": "Ratones  (archivos CSV + asignación de grupo)"},
+    "normalization_section": {"en": "Normalization",   "fr": "Normalisation",          "es": "Normalización"},
+    "norm_global_robust": {
+        "en": "Global robust  (recommended for inter-group comparison)",
+        "fr": "Robuste global  (recommandé pour comparaison inter-groupes)",
+        "es": "Robusto global  (recomendado para comparación inter-grupos)"},
+    "norm_permouse_robust": {
+        "en": "Per-mouse robust  (removes inter-mouse differences)",
+        "fr": "Robuste par souris  (supprime les différences inter-souris)",
+        "es": "Robusto por ratón  (elimina diferencias inter-ratón)"},
+    "norm_global_robust_hint": {
+        "en": "Global robust: one scaler on all pooled voxels — preserves biological differences between groups.",
+        "fr": "Robuste global : un seul scaler sur tous les voxels poolés — préserve les différences biologiques entre groupes.",
+        "es": "Robusto global: un único scaler en todos los vóxeles agrupados — preserva las diferencias biológicas entre grupos."},
+    "atl_params_section": {"en": "Atlas parameters",   "fr": "Paramètres Atlas",        "es": "Parámetros Atlas"},
+    "k_min_bic"         : {"en": "K min (BIC selection)", "fr": "K min (sélection BIC)", "es": "K mín (selección BIC)"},
+    "k_max_bic"         : {"en": "K max (BIC selection)", "fr": "K max (sélection BIC)", "es": "K máx (selección BIC)"},
+    "k_override_blank"  : {"en": "K override  (blank = auto BIC)",
+                           "fr": "K forcé  (vide = auto BIC)",
+                           "es": "K forzado  (vacío = auto BIC)"},
+    "gmm_restarts"      : {"en": "GMM restarts (n_init)", "fr": "Redémarrages GMM (n_init)", "es": "Reinicios GMM (n_init)"},
+    "bootstrap_runs"    : {"en": "Bootstrap runs (stability check)",
+                           "fr": "Réplications bootstrap (vérif. stabilité)",
+                           "es": "Réplicas bootstrap (verificación estabilidad)"},
+    "permutations_label": {"en": "Permutations (PERMANOVA / PERMDISP)",
+                           "fr": "Permutations (PERMANOVA / PERMDISP)",
+                           "es": "Permutaciones (PERMANOVA / PERMDISP)"},
+    "no_covar_defined"  : {"en": "  (no covariable defined)",
+                           "fr": "  (aucune covariable définie)",
+                           "es": "  (ninguna covariable definida)"},
+
+    # ── Joint tab ────────────────────────────────────────────────────────────
+    "jt_title"          : {"en": "Joint Multi-Mouse Clustering",
+                           "fr": "Clustering Multi-Souris Conjoint",
+                           "es": "Clustering Multi-Ratón Conjunto"},
+    "jt_desc"           : {
+        "en": "Pool all voxels from N mice (per-mouse robust normalization), run one clustering "
+               "to discover universal habitats that span all animals simultaneously. "
+               "Same color = same habitat across every mouse.",
+        "fr": "Poolez tous les voxels de N souris (normalisation robuste par souris), lancez "
+               "un clustering unique pour découvrir des habitats universels couvrant tous les "
+               "animaux simultanément. Même couleur = même habitat chez chaque souris.",
+        "es": "Agrupe todos los vóxeles de N ratones (normalización robusta por ratón), ejecute "
+               "un clustering único para descubrir hábitats universales que abarquen todos los "
+               "animales simultáneamente. Mismo color = mismo hábitat en cada ratón."},
+    "norm_robust_jt_radio": {
+        "en": "Per-mouse robust  —  0 = each mouse's tumor median  (recommended)",
+        "fr": "Robuste par souris  —  0 = médiane tumorale de chaque souris  (recommandé)",
+        "es": "Robusto por ratón  —  0 = mediana tumoral de cada ratón  (recomendado)"},
+    "norm_robust_jt_hint": {
+        "en": "Each mouse is scaled by its own tumor median/IQR before pooling. "
+               "Preserves intra-mouse heterogeneity; best results for cross-animal clustering.",
+        "fr": "Chaque souris est normalisée par sa propre médiane/IQR tumorale avant pooling. "
+               "Préserve l'hétérogénéité intra-souris ; meilleurs résultats pour le clustering inter-animal.",
+        "es": "Cada ratón se escala por su propia mediana/IQR tumoral antes del agrupamiento. "
+               "Preserva la heterogeneidad intra-ratón; mejores resultados para el clustering inter-animal."},
+    "norm_cl_jt_radio"  : {"en": "CL normalization  —  0 = contralateral tissue",
+                           "fr": "Normalisation CL  —  0 = tissu controlatéral",
+                           "es": "Normalización CL  —  0 = tejido contralateral"},
+    "norm_cl_jt_hint"   : {
+        "en": "Each parameter is scaled by its own CL median/IQR. Requires a contralateral ROI; "
+               "inter-session variability (e.g. MTR) can degrade pooled clustering quality.",
+        "fr": "Chaque paramètre est normalisé par sa propre médiane/IQR CL. Nécessite une ROI "
+               "controlatérale ; la variabilité inter-session (ex. MTR) peut dégrader la qualité du clustering poolé.",
+        "es": "Cada parámetro se escala por su propia mediana/IQR CL. Requiere una ROI contralateral; "
+               "la variabilidad inter-sesión (p.ej. MTR) puede degradar la calidad del clustering agrupado."},
+    "srsc_unavailable"  : {
+        "en": "SRSC is not available for joint clustering (spatial coordinates are per-mouse "
+               "and cannot be pooled across animals).",
+        "fr": "SRSC n'est pas disponible pour le clustering joint (les coordonnées spatiales "
+               "sont par souris et ne peuvent pas être poolées entre animaux).",
+        "es": "SRSC no está disponible para el clustering conjunto (las coordenadas espaciales "
+               "son por ratón y no pueden agruparse entre animales)."},
+    "dtopo_section"     : {"en": "d_topo spatial feature",
+                           "fr": "Caractéristique spatiale d_topo",
+                           "es": "Característica espacial d_topo"},
+    "dtopo_weight_label": {"en": "Weight  (0 = off, 1 = equal to MRI)",
+                           "fr": "Poids  (0 = désactivé, 1 = égal aux IRM)",
+                           "es": "Peso  (0 = desactivado, 1 = igual a IRM)"},
+    "dtopo_min_frac_label": {"en": "Min necrosis fraction  (%)",
+                             "fr": "Fraction nécrose min  (%)",
+                             "es": "Fracción necrosis mín  (%)"},
+    "dtopo_hint"        : {
+        "en": "Mice with necrosis below the threshold receive d_topo = 0 (MRI features only). See '?' for details.",
+        "fr": "Les souris avec une nécrose inférieure au seuil reçoivent d_topo = 0 (caractéristiques IRM uniquement). Voir '?' pour les détails.",
+        "es": "Los ratones con necrosis por debajo del umbral reciben d_topo = 0 (solo características IRM). Ver '?' para más detalles."},
+
+    # ── Result dialogs ───────────────────────────────────────────────────────
+    "cmp_done_header"   : {"en": "Comparative Analysis complete",
+                           "fr": "Analyse comparative terminée",
+                           "es": "Análisis comparativo completado"},
+    "open_pdf"          : {"en": "Open PDF",      "fr": "Ouvrir le PDF",     "es": "Abrir PDF"},
+    "open_folder"       : {"en": "Open folder",   "fr": "Ouvrir le dossier", "es": "Abrir carpeta"},
+    "atl_done_header"   : {"en": "Atlas comparison complete",
+                           "fr": "Comparaison Atlas terminée",
+                           "es": "Comparación Atlas completada"},
+    "tab_summary"       : {"en": "Summary",        "fr": "Résumé",            "es": "Resumen"},
+    "tab_output_folder" : {"en": "Output folder",  "fr": "Dossier de sortie", "es": "Carpeta de salida"},
+    "tab_dtopo_impact"  : {"en": "ℹ d_topo impact", "fr": "ℹ Impact d_topo", "es": "ℹ Impacto d_topo"},
+    "results_saved_to"  : {"en": "Results saved to:",
+                           "fr": "Résultats enregistrés dans :",
+                           "es": "Resultados guardados en:"},
+    "jt_output_contents": {
+        "en": "Contents: per-mouse folders (habitats_result.csv, segmentation maps), "
+               "global centroids.json, joint_profiles.png, K-selection charts.",
+        "fr": "Contenu : dossiers par souris (habitats_result.csv, cartes de segmentation), "
+               "centroids.json global, joint_profiles.png, graphiques de sélection de K.",
+        "es": "Contenido: carpetas por ratón (habitats_result.csv, mapas de segmentación), "
+               "centroids.json global, joint_profiles.png, gráficos de selección de K."},
+    "tab_explanation"   : {"en": "Explanation",    "fr": "Explication",       "es": "Explicación"},
+    "tab_figures_pdf"   : {"en": "Figures (PDF)",  "fr": "Figures (PDF)",     "es": "Figuras (PDF)"},
+    "pdf_report_with_figs": {"en": "PDF report with all figures:",
+                             "fr": "Rapport PDF avec toutes les figures :",
+                             "es": "Informe PDF con todas las figuras:"},
+
+    # ── Joint result — d_topo panel ──────────────────────────────────────────
+    "dtopo_what_title"  : {"en": "What is d_topo_norm?",
+                           "fr": "Qu'est-ce que d_topo_norm ?",
+                           "es": "¿Qué es d_topo_norm?"},
+    "dtopo_settings_title": {"en": "Current settings",
+                             "fr": "Paramètres actuels",
+                             "es": "Configuración actual"},
+    "dtopo_adjust_hint" : {
+        "en": "Adjust DTOPO_JOINT_WEIGHT and DTOPO_MIN_NECROSIS_FRACTION in config.py.",
+        "fr": "Ajustez DTOPO_JOINT_WEIGHT et DTOPO_MIN_NECROSIS_FRACTION dans config.py.",
+        "es": "Ajuste DTOPO_JOINT_WEIGHT y DTOPO_MIN_NECROSIS_FRACTION en config.py."},
+    "dtopo_per_mouse_title": {"en": "Per-mouse d_topo decision",
+                              "fr": "Décision d_topo par souris",
+                              "es": "Decisión d_topo por ratón"},
+    "dtopo_not_activated": {
+        "en": "  d_topo was not activated (global necrosis guard did not pass).",
+        "fr": "  d_topo n'a pas été activé (le garde global de nécrose n'a pas été validé).",
+        "es": "  d_topo no fue activado (el guardia global de necrosis no pasó)."},
+    "dtopo_table_mouse" : {"en": "Mouse",      "fr": "Souris",      "es": "Ratón"},
+    "dtopo_table_necro" : {"en": "Necrosis %", "fr": "Nécrose %",   "es": "Necrosis %"},
+    "dtopo_included"    : {"en": "✔ included", "fr": "✔ inclus",    "es": "✔ incluido"},
+    "dtopo_skipped"     : {"en": "✘ skipped",  "fr": "✘ ignoré",    "es": "✘ omitido"},
+    "dtopo_interp_title": {"en": "How to interpret the results",
+                           "fr": "Comment interpréter les résultats",
+                           "es": "Cómo interpretar los resultados"},
+
+    # ── Window titles ────────────────────────────────────────────────────────
+    "wintitle_dtopo_help"   : {"en": "d_topo spatial feature — help",
+                               "fr": "Caractéristique spatiale d_topo — aide",
+                               "es": "Característica espacial d_topo — ayuda"},
+    "wintitle_cmp_done"     : {"en": "Comparative Analysis — Done",
+                               "fr": "Analyse Comparative — Terminée",
+                               "es": "Análisis Comparativo — Listo"},
+    "wintitle_atl_done"     : {"en": "Atlas Comparison — Done",
+                               "fr": "Comparaison Atlas — Terminée",
+                               "es": "Comparación Atlas — Lista"},
+    "wintitle_jt_results"   : {"en": "Joint Clustering Results",
+                               "fr": "Résultats du Clustering Joint",
+                               "es": "Resultados del Clustering Conjunto"},
+    "wintitle_disc_results" : {"en": "Discovery Results",
+                               "fr": "Résultats de la Découverte",
+                               "es": "Resultados del Descubrimiento"},
 }
 
 # ---------------------------------------------------------------------------
