@@ -818,10 +818,24 @@ _TR = {
         "es": "Agrupe todos los vóxeles de N ratones (normalización robusta por ratón), ejecute "
                "un clustering único para descubrir hábitats universales que abarquen todos los "
                "animales simultáneamente. Mismo color = mismo hábitat en cada ratón."},
+    "norm_robust_global_jt_radio": {
+        "en": "Global robust  —  ONE scaler on all pooled voxels  (recommended)",
+        "fr": "Robuste global  —  UN seul scaler sur tous les voxels poolés  (recommandé)",
+        "es": "Robusto global  —  UN escalador sobre todos los vóxeles agrupados  (recomendado)"},
+    "norm_robust_global_jt_hint": {
+        "en": "Fits one RobustScaler on all voxels from all mice pooled together. "
+               "Preserves true inter-mouse biological differences while keeping parameters "
+               "on comparable scales. Best choice for joint clustering.",
+        "fr": "Ajuste un RobustScaler unique sur tous les voxels de toutes les souris poolés. "
+               "Préserve les vraies différences biologiques inter-souris tout en gardant les "
+               "paramètres sur des échelles comparables. Meilleur choix pour le clustering joint.",
+        "es": "Ajusta un RobustScaler único sobre todos los vóxeles de todos los ratones agrupados. "
+               "Preserva las diferencias biológicas inter-ratón reales manteniendo parámetros en "
+               "escalas comparables. Mejor opción para el clustering conjunto."},
     "norm_robust_jt_radio": {
-        "en": "Per-mouse robust  —  0 = each mouse's tumor median  (recommended)",
-        "fr": "Robuste par souris  —  0 = médiane tumorale de chaque souris  (recommandé)",
-        "es": "Robusto por ratón  —  0 = mediana tumoral de cada ratón  (recomendado)"},
+        "en": "Per-mouse robust  —  0 = each mouse's tumor median",
+        "fr": "Robuste par souris  —  0 = médiane tumorale de chaque souris",
+        "es": "Robusto por ratón  —  0 = mediana tumoral de cada ratón"},
     "norm_robust_jt_hint": {
         "en": "Each mouse is scaled by its own tumor median/IQR before pooling. "
                "Preserves intra-mouse heterogeneity; best results for cross-animal clustering.",

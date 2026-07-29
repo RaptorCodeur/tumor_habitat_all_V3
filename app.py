@@ -3964,6 +3964,17 @@ class HabitatApp(tk.Tk):
 
         ttk.Radiobutton(
             inner,
+            text=t("norm_robust_global_jt_radio"),
+            variable=self._jt_normalization,
+            value='robust_global'
+        ).pack(anchor='w', padx=px + 4, pady=1)
+        ttk.Label(inner,
+                  text=t("norm_robust_global_jt_hint"),
+                  style="Sub.TLabel", wraplength=500
+                  ).pack(anchor='w', padx=px + 22, pady=(0, 6))
+
+        ttk.Radiobutton(
+            inner,
             text=t("norm_robust_jt_radio"),
             variable=self._jt_normalization,
             value='robust'
@@ -4353,9 +4364,13 @@ class HabitatApp(tk.Tk):
                 log(f"[Joint] Boundary analysis skipped: {_e}")
 
             # Build summary text
-            norm_desc = ("CL-based  (0 = contralateral tissue)"
-                         if normalization == 'cl'
-                         else "per-mouse robust  (0 = each mouse's tumor median)")
+            _norm_desc_map = {
+                'cl'           : "CL-based  (0 = contralateral tissue)",
+                'cl_hybrid'    : "CL-hybrid  (CL centering + tumor-IQR scale)",
+                'robust'       : "per-mouse robust  (0 = each mouse's tumor median)",
+                'robust_global': "global robust  (0 = global tumor median)",
+            }
+            norm_desc = _norm_desc_map.get(normalization, normalization)
             n_total = len(df_pooled)
             lines = [
                 "═" * 62,

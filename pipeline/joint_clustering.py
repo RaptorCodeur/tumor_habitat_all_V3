@@ -29,12 +29,22 @@ from config                  import (N_JOBS_GAP, HABITAT_COLORS_HEX,
                                       RANDOM_SEED)
 
 _NORM_YLABEL = {
-    'cl'    : 'CL-normalized value  (0 = contralateral tissue)',
-    'robust': "Robust-scaled value  (0 = each mouse's tumor median)",
+    'cl'           : 'CL-normalized value  (0 = contralateral tissue)',
+    'cl_hybrid'    : 'CL-hybrid value  (0 = contralateral tissue, unit = tumor IQR)',
+    'robust'       : "Robust-scaled value  (0 = each mouse's tumor median)",
+    'robust_global': 'Global robust-scaled value  (0 = global tumor median)',
 }
 _NORM_REFLABEL = {
-    'cl'    : 'Contralateral reference (0)',
-    'robust': 'Per-mouse tumor median (0)',
+    'cl'           : 'Contralateral reference (0)',
+    'cl_hybrid'    : 'Contralateral reference (0)',
+    'robust'       : 'Per-mouse tumor median (0)',
+    'robust_global': 'Global tumor median (0)',
+}
+_NORM_TAG = {
+    'cl'           : 'CL-normalized',
+    'cl_hybrid'    : 'CL-hybrid',
+    'robust'       : 'per-mouse robust',
+    'robust_global': 'global robust',
 }
 
 
@@ -51,9 +61,9 @@ def _plot_global_profiles(centroids, parameters, best_k, output_dir, normalizati
     x     = np.arange(len(parameters))
     width = 0.8 / best_k
 
-    ylabel   = _NORM_YLABEL.get(normalization, _NORM_YLABEL['cl'])
-    reflabel = _NORM_REFLABEL.get(normalization, _NORM_REFLABEL['cl'])
-    norm_tag = 'CL-normalized' if normalization == 'cl' else 'per-mouse robust'
+    ylabel   = _NORM_YLABEL.get(normalization, _NORM_YLABEL['robust'])
+    reflabel = _NORM_REFLABEL.get(normalization, _NORM_REFLABEL['robust'])
+    norm_tag = _NORM_TAG.get(normalization, normalization)
     title    = (f'Joint habitat profiles — {best_k} universal habitats'
                 f'  [{norm_tag}]')
 
@@ -195,7 +205,7 @@ def generate_joint_report_pdf(df_pooled, common_params, mice_list,
     """
     pdf_path  = os.path.join(output_dir, 'joint_report.pdf')
     doc_name  = os.path.basename(output_dir)          # e.g. "joint_clustering_5"
-    norm_tag  = 'CL-normalized' if normalization == 'cl' else 'per-mouse robust'
+    norm_tag  = _NORM_TAG.get(normalization, normalization)
     n_mice    = len(mice_list)
     n_total   = len(df_pooled)
     labels    = df_pooled['Habitat'].values.astype(int)
