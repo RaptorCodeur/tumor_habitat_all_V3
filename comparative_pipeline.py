@@ -680,12 +680,20 @@ def run_comparative_pdf(mice_data, method, k_range, k_override,
                 mask = df_jt["mouse_name"] == name
                 if not mask.any():
                     continue
-                sub  = df_jt[mask].reset_index(drop=True)
+                sub     = df_jt[mask].reset_index(drop=True)
+                feats_m = sub[vis_params].values if vis_params else np.empty((0, 0))
+                labs_m  = sub["Habitat"].values
+                # Per-mouse centroids: mean of each mouse's own voxels per habitat
+                cents_m = np.array([
+                    feats_m[labs_m == c].mean(axis=0)
+                    if (labs_m == c).any() else np.zeros(len(vis_params))
+                    for c in range(jt_k)
+                ]) if vis_params else cents_arr
                 joint_per_mouse[name] = {
-                    "labels"    : sub["Habitat"].values,
-                    "features"  : sub[vis_params].values if vis_params else np.empty((0, 0)),
+                    "labels"    : labs_m,
+                    "features"  : feats_m,
                     "parameters": vis_params,
-                    "centroids" : cents_arr,
+                    "centroids" : cents_m,
                     "k"         : jt_k,
                     "df"        : sub[["X", "Y", "Slice"]].copy(),
                 }

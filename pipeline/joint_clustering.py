@@ -323,6 +323,42 @@ def generate_joint_report_pdf(df_pooled, common_params, mice_list,
             pdf.savefig(fig, bbox_inches='tight')
             plt.close(fig)
 
+        # ── Global centroid heatmap ───────────────────────────────────
+        vis_params = [p for p in common_params if p != 'd_topo_norm']
+        if centroids and vis_params:
+            mat = np.array([
+                [centroids[c].get(p, 0.0) for p in vis_params]
+                for c in range(best_k) if c in centroids
+            ])
+            plbls = [p.replace('DTI-', '').replace('T2star', 'T2*')
+                     for p in vis_params]
+            vabs  = max(float(np.nanmax(np.abs(mat))), 1e-6)
+            fig_w = max(8.0, len(vis_params) * 1.1)
+            fig_h = max(3.5, best_k * 0.7 + 1.5)
+            fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+            im = ax.imshow(mat, aspect='auto', cmap='RdBu_r',
+                           vmin=-vabs, vmax=vabs)
+            ax.set_xticks(range(len(vis_params)))
+            ax.set_xticklabels(plbls, rotation=45, ha='right', fontsize=9)
+            ax.set_yticks(range(len(mat)))
+            ax.set_yticklabels([f'H{c}' for c in range(len(mat))], fontsize=9)
+            cb = plt.colorbar(im, ax=ax, fraction=0.035, pad=0.02)
+            cb.ax.tick_params(labelsize=8)
+            cb.set_label('Normalized value', fontsize=9)
+            for r in range(mat.shape[0]):
+                for c in range(mat.shape[1]):
+                    v = mat[r, c]
+                    ax.text(c, r, f'{v:.2f}', ha='center', va='center',
+                            fontsize=8,
+                            color='black' if abs(v) < vabs * 0.6 else 'white')
+            ax.set_title(
+                f'Universal habitat centroids — {best_k} habitats  [{norm_tag}]',
+                fontsize=12, fontweight='bold', pad=10)
+            plt.tight_layout()
+            _header(ax, 'Universal Centroids Heatmap')
+            pdf.savefig(fig, bbox_inches='tight')
+            plt.close(fig)
+
         # ── Per-mouse pages ──────────────────────────────────────────
         for i, mouse in enumerate(mice_list):
             name     = mouse['name']
