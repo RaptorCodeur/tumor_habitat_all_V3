@@ -838,14 +838,32 @@ def _draw_slice(ax, df_sl, mouse_name, cluster_to_meta, mh_color,
     ax.imshow(img, interpolation="nearest", origin="upper",
               aspect="equal")
 
-    # ── Thin vector contour borders ──────────────────────────────────────
-    unique_vals = sorted(np.unique(hab_grid))
-    if len(unique_vals) > 1:
-        levels = [(unique_vals[k] + unique_vals[k + 1]) / 2.0
-                  for k in range(len(unique_vals) - 1)]
-        ax.contour(hab_grid, levels=levels,
-                   colors="black", linewidths=0.35,
-                   antialiased=True)
+    # ── Sub-pixel habitat boundaries via LineCollection ──────────────────
+    # Draw vector segments exactly on the edge between adjacent pixels
+    # (at half-integer coordinates) — one unique line per border, no doubling.
+    if len(np.unique(hab_grid)) > 1:
+        from matplotlib.collections import LineCollection
+        segs = []
+        # Horizontal edges: boundary between row r and row r+1
+        rs, cs = np.where(hab_grid[:-1, :] != hab_grid[1:, :])
+        if len(rs):
+            h_segs = np.stack([
+                np.column_stack([cs - 0.5, rs + 0.5]),
+                np.column_stack([cs + 0.5, rs + 0.5]),
+            ], axis=1)
+            segs.append(h_segs)
+        # Vertical edges: boundary between col c and col c+1
+        rs, cs = np.where(hab_grid[:, :-1] != hab_grid[:, 1:])
+        if len(rs):
+            v_segs = np.stack([
+                np.column_stack([cs + 0.5, rs - 0.5]),
+                np.column_stack([cs + 0.5, rs + 0.5]),
+            ], axis=1)
+            segs.append(v_segs)
+        if segs:
+            ax.add_collection(LineCollection(
+                np.concatenate(segs, axis=0),
+                colors=[(0, 0, 0, 0.45)], linewidths=0.4, antialiased=False))
 
     # ── Cluster numbers (1-based) ─────────────────────────────────────────
     hab_int = np.full((h, w), -1, dtype=int)

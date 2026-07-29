@@ -14,13 +14,14 @@ from matplotlib.backends.backend_pdf import PdfPages
 from sklearn.decomposition import PCA
 
 from pipeline.loading    import load_data, robust_scale, resolve_dti_parameters
-from pipeline.spatial    import prepare_features
+from pipeline.spatial    import prepare_features, inject_dtopo_centroids
 from pipeline.clustering import run_clustering, run_clustering_with_size_guard
 from pipeline.selection  import select_optimal_k
 from pipeline.joint_clustering import run_joint_pipeline
 from multi_mouse_discovery import (
     find_common_parameters,
     build_centroid_matrix, run_meta_clustering, find_optimal_meta_k,
+    SIZE_FLOOR as _DISC_SIZE_FLOOR,
 )
 from config import (
     HABITAT_COLORS,
@@ -57,7 +58,7 @@ def run_classic_for_mouse(csv_files, method, k_range, k_override,
         parameters, _       = resolve_dti_parameters(parameters)
         df_scaled, feat_sc, _ = robust_scale(df_all, parameters)
 
-        features_clust, _   = prepare_features(
+        features_clust, dtopo_meta = prepare_features(
             feat_sc, df_all, parameters, n_init_gmm=n_init)
 
         k_ov = int(k_override) if str(k_override).strip().isdigit() else None
@@ -102,15 +103,41 @@ def run_classic_for_mouse(csv_files, method, k_range, k_override,
 
         feat_cols  = parameters
         centroids  = df_scaled.groupby("Habitat")[feat_cols].mean().values
+
+        # Build enriched centroid dicts for discovery (mirrors standalone app):
+        # inject d_topo_norm so meta-clustering uses the same 7D space as the
+        # standalone Discovery tab instead of the 6D CSV-derived space.
+        centroids_dict = {
+            int(c): {param: float(feat_sc[labels == c, pi].mean())
+                     for pi, param in enumerate(parameters)}
+            for c in range(int(best_k))
+        }
+        inject_dtopo_centroids(centroids_dict, labels, dtopo_meta)
+        total_vox = max(len(labels), 1)
+        clusters_disc = []
+        for c in range(int(best_k)):
+            mask  = labels == c
+            n_vox = int(mask.sum())
+            if n_vox < _DISC_SIZE_FLOOR:
+                continue
+            clusters_disc.append({
+                "cluster_id": c,
+                "user_label": "Unknown",
+                "n_voxels"  : n_vox,
+                "proportion": n_vox / total_vox,
+                "centroid"  : centroids_dict[c],
+            })
+
         log(f"  Classic k={best_k}")
         return {
-            "labels"    : labels,
-            "features"  : feat_sc,
-            "parameters": feat_cols,
-            "df"        : df_scaled,
-            "centroids" : centroids,
-            "k"         : int(best_k),
-            "csv_path"  : csv_path,
+            "labels"      : labels,
+            "features"    : feat_sc,
+            "parameters"  : feat_cols,
+            "df"          : df_scaled,
+            "centroids"   : centroids,
+            "k"           : int(best_k),
+            "csv_path"    : csv_path,
+            "clusters_disc": clusters_disc,
         }
     except Exception as e:
         import traceback
@@ -125,27 +152,26 @@ def run_discovery_meta(classic_results, method, k_range, k_override, n_init, log
     """
     Meta-cluster per-mouse classic centroids and map labels back to voxel level.
 
-    Uses load_mouse_data() from multi_mouse_discovery — the exact same function
-    as standalone Discovery — so SIZE_FLOOR filtering, centroid building and
-    parameter alignment are identical in both modes.
+    Uses the pre-computed clusters_disc from each classic result, which mirrors
+    the standalone Discovery tab: centroids include d_topo_norm (via
+    inject_dtopo_centroids) and small clusters (<SIZE_FLOOR voxels) are dropped.
+    This aligns the comparative pipeline's discovery with the standalone app.
 
     Returns {mouse_name: {labels, features, parameters, centroids, common_params, k}}
     or None on failure.
     """
-    from multi_mouse_discovery import load_mouse_data
-
     try:
         mice_list = []
         for name, cr in classic_results.items():
-            csv_path = cr.get("csv_path")
-            if not csv_path or not os.path.isfile(csv_path):
-                log(f"  [Discovery] {name}: habitats_result.csv not found — skipped")
+            clusters_disc = cr.get("clusters_disc")
+            if not clusters_disc:
+                log(f"  [Discovery] {name}: no valid clusters — skipped")
                 continue
-            mouse_data = load_mouse_data(csv_path)
-            if mouse_data is None:
-                log(f"  [Discovery] {name}: load_mouse_data returned None — skipped")
-                continue
-            mice_list.append(mouse_data)
+            mice_list.append({
+                "name"    : name,
+                "csv_path": cr.get("csv_path", ""),
+                "clusters": clusters_disc,
+            })
 
         if len(mice_list) < 2:
             log("  [Discovery] Need ≥ 2 valid mice — skipped")
@@ -192,20 +218,15 @@ def run_discovery_meta(classic_results, method, k_range, k_override, n_init, log
             for i, rm in enumerate(row_meta)
         }
 
-        # row_meta["mouse"] comes from load_mouse_data → _mouse_name(csv_path),
-        # i.e. the parent folder of the CSV.  Use the same function to build
-        # the lookup key when mapping voxels back.
-        from multi_mouse_discovery import _mouse_name as _mmname
-
+        # cluster_to_meta keys use the name from classic_results (same key used
+        # when building mice_list above), so look up directly by name.
         out = {}
         for name, cr in classic_results.items():
-            csv_path = cr.get("csv_path")
-            if not csv_path:
+            if not cr.get("clusters_disc"):
                 continue
-            mm_name   = _mmname(csv_path)
             hab_col   = cr["df"]["Habitat"].values
             disc_lbls = np.array([
-                cluster_to_meta.get((mm_name, int(h)), 0) for h in hab_col
+                cluster_to_meta.get((name, int(h)), 0) for h in hab_col
             ])
 
             # meta_centroids live in common_params space which may contain a

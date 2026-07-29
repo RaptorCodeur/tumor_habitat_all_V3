@@ -103,10 +103,14 @@ def load_joint_dataset(mice_list, normalization='cl', log_fn=print):
     Parameters
     ----------
     mice_list     : list of {'name': str, 'files': [path, ...]}
-    normalization : 'cl'     — (val - CL_median) / CL_IQR
-                              (0 = contralateral tissue, comparable across mice)
-                   'robust'  — (val - tumor_median) / tumor_IQR per mouse
-                              (0 = each mouse's own tumor median)
+    normalization : 'cl'            — (val - CL_median) / CL_IQR
+                                      (0 = contralateral tissue, comparable across mice)
+                   'robust'         — (val - tumor_median) / tumor_IQR per mouse
+                                      (removes inter-mouse biological differences)
+                   'robust_global'  — ONE RobustScaler fitted on all pooled voxels,
+                                      then applied to every mouse identically.
+                                      Preserves inter-group differences while keeping
+                                      features on comparable scales.
     log_fn        : callable for progress messages
 
     Returns
@@ -114,10 +118,12 @@ def load_joint_dataset(mice_list, normalization='cl', log_fn=print):
     common_params : list[str]  — parameters present in all mice
     df_pooled     : DataFrame with columns X, Y, Slice, *params, mouse_id, mouse_name
     """
-    norm_label = ("CL normalization (0 = contralateral)"
-                  if normalization == 'cl'
-                  else "per-mouse robust scaling (0 = tumor median)")
-    log_fn(f"Normalization strategy: {norm_label}")
+    _norm_labels = {
+        'cl':            "CL normalization (0 = contralateral)",
+        'robust':        "per-mouse robust scaling (removes inter-mouse differences)",
+        'robust_global': "global robust scaling (ONE scaler on all pooled voxels)",
+    }
+    log_fn(f"Normalization strategy: {_norm_labels.get(normalization, normalization)}")
 
     all_dfs    = []
     all_params = []
@@ -130,12 +136,14 @@ def load_joint_dataset(mice_list, normalization='cl', log_fn=print):
         parameters, df_tumor = load_data(files)
         parameters, _        = resolve_dti_parameters(parameters)
 
-        log_fn(f"[{name}] Normalizing — {len(parameters)} params, "
-               f"{len(df_tumor)} voxels…")
+        log_fn(f"[{name}] {len(parameters)} params, {len(df_tumor)} voxels")
 
         if normalization == 'cl':
             stats        = cl_stats_per_mouse(files, parameters)
             df_scaled, _ = cl_normalize(df_tumor, parameters, stats)
+        elif normalization == 'robust_global':
+            # Store raw df — global scaling applied after pooling below
+            df_scaled = df_tumor.copy()
         else:
             df_scaled, _ = robust_scale_per_mouse(df_tumor, parameters)
 
@@ -154,10 +162,23 @@ def load_joint_dataset(mice_list, normalization='cl', log_fn=print):
     if not common_params:
         raise ValueError("No common MRI parameters found across selected mice.")
 
-    log_fn(f"Common parameters for clustering: {', '.join(common_params)}")
+    log_fn(f"Common parameters: {', '.join(common_params)}")
 
     keep      = ['X', 'Y', 'Slice'] + all_common_cols + ['mouse_id', 'mouse_name']
     df_pooled = pd.concat([df[[c for c in keep if c in df.columns]] for df in all_dfs],
                           ignore_index=True)
+
+    # Global robust scaling: fit ONE scaler on all pooled voxels, apply to all
+    if normalization == 'robust_global':
+        from sklearn.preprocessing import RobustScaler
+        X_all    = df_pooled[common_params].values.astype(np.float64)
+        scaler   = RobustScaler().fit(X_all)
+        X_scaled = scaler.transform(X_all)
+        X_scaled = np.nan_to_num(X_scaled, nan=0.0)
+        for j, p in enumerate(common_params):
+            df_pooled[p] = X_scaled[:, j]
+        log_fn(f"Global RobustScaler fitted on {len(X_all)} voxels — "
+               f"medians: { {p: round(float(scaler.center_[j]),3) for j,p in enumerate(common_params)} }")
+
     log_fn(f"Pooled: {len(df_pooled)} voxels from {len(mice_list)} mice")
     return common_params, df_pooled

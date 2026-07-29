@@ -511,7 +511,7 @@ class HabitatApp(tk.Tk):
         self._disc_animals    = []
         self._disc_list_inner = None
         self._disc_method     = tk.StringVar(value=CLUSTERING_METHOD)
-        self._disc_k_max      = tk.IntVar(value=7)
+        self._disc_k_max      = tk.IntVar(value=max(K_RANGE))
         self._disc_n_init     = tk.IntVar(value=N_INIT_GMM)
         self._disc_meta_k     = tk.IntVar(value=0)
         self._disc_output_name     = tk.StringVar(value="discovery")
@@ -938,6 +938,8 @@ class HabitatApp(tk.Tk):
         f1.pack(fill='x', padx=px)
         self.lbl_csv = ttk.Label(f1, text=t("no_file"), style="Sub.TLabel")
         self.lbl_csv.pack(side='left', fill='x', expand=True)
+        ttk.Button(f1, text="📁", style="Secondary.TButton", width=3,
+                   command=self._select_csv_folder).pack(side='right', padx=(0, 2))
         ttk.Button(f1, text=t("browse"), style="Secondary.TButton",
                    command=self._select_csv).pack(side='right')
 
@@ -1241,6 +1243,9 @@ class HabitatApp(tk.Tk):
         ttk.Button(card, text=t("browse"), style="Secondary.TButton",
                    command=lambda a=animal: self._cmp_browse(a)
                    ).pack(side='left', padx=2)
+        ttk.Button(card, text="📁", style="Secondary.TButton", width=3,
+                   command=lambda a=animal: self._browse_animal_folder(a)
+                   ).pack(side='left', padx=2)
         ttk.Button(card, text="✕", style="Secondary.TButton", width=2,
                    state='normal' if len(self._cmp_animals) > 1 else 'disabled',
                    command=lambda idx=i: self._cmp_remove_mouse(idx)
@@ -1535,6 +1540,27 @@ class HabitatApp(tk.Tk):
             self.lbl_csv.config(
                 text=t("n_files_selected", n=len(self.csv_files)),
                 foreground=THEME["text"])
+
+    def _select_csv_folder(self):
+        folder = filedialog.askdirectory(title="Sélectionner le dossier de l'animal")
+        if not folder:
+            return
+        files = sorted(
+            os.path.join(folder, f)
+            for f in os.listdir(folder)
+            if os.path.isfile(os.path.join(folder, f))
+            and f.lower().endswith('.csv')
+        )
+        if not files:
+            messagebox.showwarning("Dossier vide", "Aucun fichier .csv trouvé dans ce dossier.")
+            return
+        self.csv_files = files
+        self.lst_csv.delete(0, 'end')
+        for f in files:
+            self.lst_csv.insert('end', os.path.basename(f))
+        self.lbl_csv.config(
+            text=t("n_files_selected", n=len(files)),
+            foreground=THEME["text"])
 
     def _select_nifti(self):
         path = filedialog.askopenfilename(
@@ -1863,6 +1889,9 @@ class HabitatApp(tk.Tk):
         ttk.Button(card, text=t("browse"), style="Secondary.TButton",
                    command=lambda a=animal: self._ia_browse(a)
                    ).pack(side='left', padx=2)
+        ttk.Button(card, text="📁", style="Secondary.TButton", width=3,
+                   command=lambda a=animal: self._browse_animal_folder(a)
+                   ).pack(side='left', padx=2)
 
         ttk.Button(card, text="✕", style="Secondary.TButton", width=2,
                    state='normal' if len(self._ia_animals) > 1 else 'disabled',
@@ -2126,6 +2155,8 @@ class HabitatApp(tk.Tk):
         self._im_lbl_csv = ttk.Label(f_browse, text=t("no_file"),
                                       style="Sub.TLabel")
         self._im_lbl_csv.pack(side='left', fill='x', expand=True)
+        ttk.Button(f_browse, text="📁", style="Secondary.TButton", width=3,
+                   command=self._im_select_files_folder).pack(side='right', padx=(0, 2))
         ttk.Button(f_browse, text=t("browse"), style="Secondary.TButton",
                    command=self._im_select_files).pack(side='right')
 
@@ -2245,6 +2276,27 @@ class HabitatApp(tk.Tk):
             self._im_lbl_csv.config(
                 text=t("n_files_selected", n=len(self._im_csv_files)),
                 foreground=THEME["text"])
+
+    def _im_select_files_folder(self):
+        folder = filedialog.askdirectory(title="Sélectionner le dossier de l'animal")
+        if not folder:
+            return
+        files = sorted(
+            os.path.join(folder, f)
+            for f in os.listdir(folder)
+            if os.path.isfile(os.path.join(folder, f))
+            and f.lower().endswith('.csv')
+        )
+        if not files:
+            messagebox.showwarning("Dossier vide", "Aucun fichier .csv trouvé dans ce dossier.")
+            return
+        self._im_csv_files = files
+        self._im_lst_csv.delete(0, 'end')
+        for f in files:
+            self._im_lst_csv.insert('end', os.path.basename(f))
+        self._im_lbl_csv.config(
+            text=t("n_files_selected", n=len(files)),
+            foreground=THEME["text"])
 
     def _im_select_output(self):
         path = filedialog.askdirectory(title=t("dlg_select_output"))
@@ -2764,6 +2816,9 @@ class HabitatApp(tk.Tk):
 
         ttk.Button(row1, text=t("browse"), style="Secondary.TButton",
                    command=lambda a=animal: self._atl_browse(a)
+                   ).pack(side='left', padx=2)
+        ttk.Button(row1, text="📁", style="Secondary.TButton", width=3,
+                   command=lambda a=animal: self._browse_animal_folder(a)
                    ).pack(side='left', padx=2)
 
         ttk.Label(row1, text="Group:", style="Sub.TLabel").pack(side='left', padx=(10, 2))
@@ -3424,6 +3479,9 @@ class HabitatApp(tk.Tk):
         ttk.Button(card, text=t("browse"), style="Secondary.TButton",
                    command=lambda a=animal: self._disc_browse(a)
                    ).pack(side='left', padx=2)
+        ttk.Button(card, text="📁", style="Secondary.TButton", width=3,
+                   command=lambda a=animal: self._disc_browse_folder(a)
+                   ).pack(side='left', padx=2)
 
         if self._disc_compare_enabled.get():
             ttk.Label(card, text="Groupe:", style="Sub.TLabel").pack(side='left', padx=(10, 2))
@@ -3446,6 +3504,29 @@ class HabitatApp(tk.Tk):
                 animal["_lbl"].config(
                     text=t("n_files", n=len(files)),
                     foreground=THEME["text"])
+
+    def _browse_animal_folder(self, animal):
+        """Shared folder-browse for all per-animal cards: picks all .csv files directly inside the chosen folder."""
+        folder = filedialog.askdirectory(title="Sélectionner le dossier de l'animal")
+        if not folder:
+            return
+        files = sorted(
+            os.path.join(folder, f)
+            for f in os.listdir(folder)
+            if os.path.isfile(os.path.join(folder, f))
+            and f.lower().endswith('.csv')
+        )
+        if not files:
+            messagebox.showwarning("Dossier vide", "Aucun fichier .csv trouvé dans ce dossier.")
+            return
+        animal["files"] = files
+        if animal.get("_lbl"):
+            animal["_lbl"].config(
+                text=t("n_files", n=len(files)),
+                foreground=THEME["text"])
+
+    # kept as alias so existing references in _disc_build_card still work
+    _disc_browse_folder = _browse_animal_folder
 
     def _disc_select_output(self):
         path = filedialog.askdirectory(title=t("dlg_select_output"))
@@ -4127,6 +4208,9 @@ class HabitatApp(tk.Tk):
 
         ttk.Button(card, text=t("browse"), style="Secondary.TButton",
                    command=lambda a=animal: self._jt_browse(a)
+                   ).pack(side='left', padx=2)
+        ttk.Button(card, text="📁", style="Secondary.TButton", width=3,
+                   command=lambda a=animal: self._browse_animal_folder(a)
                    ).pack(side='left', padx=2)
 
         if self._jt_compare_enabled.get():

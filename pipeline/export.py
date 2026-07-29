@@ -50,8 +50,17 @@ def export_results(df_scaled, parameters, habitat_labels, output_dir):
     df_export['Habitat_label'] = df_export['Habitat'].map(
         lambda h: habitat_labels.get(int(h), f'Habitat {h}')
     )
+    # Save only the resolved parameters (DTI-MD may still be in df_scaled even
+    # when AD+RD are present and resolve_dti_parameters removed it from
+    # `parameters`).  Saving it would cause load_mouse_data in
+    # multi_mouse_discovery to compute centroids in a 7-feature space while
+    # the comparative pipeline uses 6, producing different K selection and
+    # therefore different meta-habitats between the standalone app and compare.
+    save_cols = (['X', 'Y', 'Slice']
+                 + [p for p in parameters if p in df_export.columns]
+                 + ['Habitat', 'Habitat_label'])
     csv_path = os.path.join(output_dir, 'habitats_result.csv')
-    df_export.to_csv(csv_path, index=False)
+    df_export[save_cols].to_csv(csv_path, index=False)
     print(f"Results saved : {csv_path}")
 
 
