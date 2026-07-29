@@ -839,6 +839,20 @@ _TR = {
                "controlatérale ; la variabilité inter-session (ex. MTR) peut dégrader la qualité du clustering poolé.",
         "es": "Cada parámetro se escala por su propia mediana/IQR CL. Requiere una ROI contralateral; "
                "la variabilidad inter-sesión (p.ej. MTR) puede degradar la calidad del clustering agrupado."},
+    "norm_cl_hybrid_jt_radio": {
+        "en": "CL-hybrid  —  CL centering + tumor-IQR scale  (recommended with CL ROI)",
+        "fr": "CL-hybride  —  centrage CL + échelle IQR tumoral  (recommandé avec ROI CL)",
+        "es": "CL-híbrido  —  centrado CL + escala IQR tumoral  (recomendado con ROI CL)"},
+    "norm_cl_hybrid_jt_hint": {
+        "en": "Centers each parameter on the CL median (0 = healthy tissue), but scales by the "
+               "within-tumor IQR — not the narrow CL IQR. Prevents value explosion due to "
+               "small CL ROI while keeping the biological zero point. Requires a contralateral ROI.",
+        "fr": "Centre chaque paramètre sur la médiane CL (0 = tissu sain), mais normalise par "
+               "l'IQR intra-tumoral — et non le CL IQR étroit. Évite l'explosion des valeurs liée "
+               "à une petite ROI CL tout en conservant le zéro biologique. Nécessite une ROI controlatérale.",
+        "es": "Centra cada parámetro en la mediana CL (0 = tejido sano), pero escala por el "
+               "IQR intra-tumoral — no el estrecho IQR CL. Evita la explosión de valores por "
+               "ROI CL pequeña manteniendo el cero biológico. Requiere una ROI contralateral."},
     "srsc_unavailable"  : {
         "en": "SRSC is not available for joint clustering (spatial coordinates are per-mouse "
                "and cannot be pooled across animals).",

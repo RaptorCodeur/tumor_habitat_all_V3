@@ -3975,6 +3975,17 @@ class HabitatApp(tk.Tk):
 
         ttk.Radiobutton(
             inner,
+            text=t("norm_cl_hybrid_jt_radio"),
+            variable=self._jt_normalization,
+            value='cl_hybrid'
+        ).pack(anchor='w', padx=px + 4, pady=1)
+        ttk.Label(inner,
+                  text=t("norm_cl_hybrid_jt_hint"),
+                  style="Sub.TLabel", wraplength=500
+                  ).pack(anchor='w', padx=px + 22, pady=(0, 6))
+
+        ttk.Radiobutton(
+            inner,
             text=t("norm_cl_jt_radio"),
             variable=self._jt_normalization,
             value='cl'

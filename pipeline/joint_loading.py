@@ -66,6 +66,32 @@ def cl_normalize(df_tumor, parameters, cl_stats):
     return df_scaled, features
 
 
+def cl_hybrid_normalize(df_tumor, parameters, cl_stats):
+    """
+    CL-hybrid: center by CL_median (per-mouse), scale by tumor_IQR (per-mouse).
+
+    normalized = (value - CL_median) / tumor_IQR
+
+    0 = contralateral tissue level (biological zero preserved).
+    Unit = within-tumor IQR — avoids CL IQR amplification while keeping
+    parameters on comparable scales across mice and across parameters.
+    """
+    df_scaled = df_tumor.copy()
+    print(f"\n-- CL-hybrid normalization  (CL centering + tumor-IQR scaling) --")
+    print(f"{'Parameter':<12} {'CL median':>12} {'Tumor IQR':>12} {'n CL':>6}")
+    print("-" * 46)
+    for p in parameters:
+        s         = cl_stats.get(p, {'median': 0.0, 'iqr': 1.0})
+        cl_median = s['median']
+        col       = df_tumor[p].dropna()
+        q75, q25  = float(col.quantile(0.75)), float(col.quantile(0.25))
+        tumor_iqr = max(q75 - q25, 1e-8)
+        df_scaled[p] = (df_tumor[p] - cl_median) / tumor_iqr
+        print(f"{p:<12} {cl_median:>12.4f} {tumor_iqr:>12.4f} {s.get('n', 0):>6}")
+    features = np.nan_to_num(df_scaled[parameters].values, nan=0.0)
+    return df_scaled, features
+
+
 # ------------------------------------------------------------------
 # Per-mouse robust normalization
 # ------------------------------------------------------------------
@@ -104,7 +130,12 @@ def load_joint_dataset(mice_list, normalization='cl', log_fn=print):
     ----------
     mice_list     : list of {'name': str, 'files': [path, ...]}
     normalization : 'cl'            — (val - CL_median) / CL_IQR
-                                      (0 = contralateral tissue, comparable across mice)
+                                      (0 = contralateral tissue; CL IQR as unit — can
+                                      amplify noise if CL region is small/homogeneous)
+                   'cl_hybrid'      — (val - CL_median) / tumor_IQR  [recommended]
+                                      (0 = contralateral; unit = within-tumor IQR;
+                                      prevents CL-IQR amplification while preserving
+                                      biological zero; requires contralateral ROI)
                    'robust'         — (val - tumor_median) / tumor_IQR per mouse
                                       (removes inter-mouse biological differences)
                    'robust_global'  — ONE RobustScaler fitted on all pooled voxels,
@@ -120,6 +151,7 @@ def load_joint_dataset(mice_list, normalization='cl', log_fn=print):
     """
     _norm_labels = {
         'cl':            "CL normalization (0 = contralateral)",
+        'cl_hybrid':     "CL-hybrid: CL centering + tumor-IQR scaling (recommended with CL ROI)",
         'robust':        "per-mouse robust scaling (removes inter-mouse differences)",
         'robust_global': "global robust scaling (ONE scaler on all pooled voxels)",
     }
@@ -141,6 +173,9 @@ def load_joint_dataset(mice_list, normalization='cl', log_fn=print):
         if normalization == 'cl':
             stats        = cl_stats_per_mouse(files, parameters)
             df_scaled, _ = cl_normalize(df_tumor, parameters, stats)
+        elif normalization == 'cl_hybrid':
+            stats        = cl_stats_per_mouse(files, parameters)
+            df_scaled, _ = cl_hybrid_normalize(df_tumor, parameters, stats)
         elif normalization == 'robust_global':
             # Store raw df — global scaling applied after pooling below
             df_scaled = df_tumor.copy()
