@@ -490,19 +490,23 @@ def estimate_weights_from_multi_gt(animal_runs, gt_json):
 # ── Main entry point ──────────────────────────────────────────────
 def label_clusters_ws(centroids, parameters,
                       gt_labels=None, weights=None,
-                      zone_map=None, **_kwargs):
+                      zone_map=None, abstention_thr=0.0, **_kwargs):
     """
     Weakly-supervised cluster labelling — replaces classify_three_passes.
 
-    centroids  : {cluster_id: {feature: value}}
-    parameters : list of MRI parameter names
-    gt_labels  : {cluster_id: label_str}  annotated animals, optional
-    weights    : {lf_name: float}         pre-computed weights, optional
-    zone_map   : ignored (accepted for call-site compatibility)
+    centroids      : {cluster_id: {feature: value}}
+    parameters     : list of MRI parameter names
+    gt_labels      : {cluster_id: label_str}  annotated animals, optional
+    weights        : {lf_name: float}         pre-computed weights, optional
+    zone_map       : ignored (accepted for call-site compatibility)
+    abstention_thr : float — when max label probability < this threshold the
+                     cluster is assigned 'Unknown' instead of forcing the top
+                     label.  0.0 (default) = disabled (every cluster gets a
+                     label).  Suggested value: 0.35 for informed abstention.
 
     Returns {cluster_id: {
         label, label_p1, probas, score, confidence, entropy,
-        is_ambiguous, lf_votes, n_votes, desc,
+        is_ambiguous, abstained, lf_votes, n_votes, desc,
         anchor_median, anchor_necrotic,
         reclass_note, subcat_note, zone_note  ← always None (compat)
     }}
@@ -528,19 +532,25 @@ def label_clusters_ws(centroids, parameters,
         n_votes_for_best = sum(1 for name, _, tgt in LF_REGISTRY
                                if tgt == best_lbl and L[c][name] != ABSTAIN)
 
+        abstained  = abstention_thr > 0.0 and best_p < abstention_thr
+        final_lbl  = 'Unknown' if abstained else best_lbl
+        abst_note  = (f"  [abstained: P({best_lbl})={best_p:.2f} < thr={abstention_thr:.2f}]"
+                      if abstained else "")
+
         result[c] = {
-            'label'          : best_lbl,
-            'label_p1'       : best_lbl,
+            'label'          : final_lbl,
+            'label_p1'       : best_lbl,   # best WS label even when abstained
             'probas'         : p,
             'score'          : round(best_p, 3),
             'confidence'     : _confidence(best_p),
             'entropy'        : round(_entropy(p), 3),
             'is_ambiguous'   : second_p >= best_p - 0.15,
+            'abstained'      : abstained,
             'lf_votes'       : L[c],
             'n_votes'        : n_votes,
             'desc'           : (f"{n_votes_for_best}/{n_lfs_for_best} LFs voted"
                                 f"  ({n_votes}/{len(LF_REGISTRY)} total) — "
-                                f"P({best_lbl})={best_p:.2f}"),
+                                f"P({best_lbl})={best_p:.2f}{abst_note}"),
             'anchor_median'  : anchor_med,
             'anchor_necrotic': anchor_nec,
             'reclass_note'   : None,

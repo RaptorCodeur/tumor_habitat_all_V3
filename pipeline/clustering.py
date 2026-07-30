@@ -70,7 +70,13 @@ def _cluster_kmeans(features_scaled, k, sample_weight=None):
     km.fit(features_scaled, sample_weight=sample_weight)
     labels = km.labels_
     _print_cluster_sizes(labels, k)
-    return labels, {"model": km}
+    # Soft assignments via distance-based softmax (mirrors GMM proba interface)
+    dists = km.transform(features_scaled)          # (n, k) distances to centroids
+    neg_d = -dists
+    neg_d -= neg_d.max(axis=1, keepdims=True)      # numerical stability
+    exp_d  = np.exp(neg_d)
+    proba  = exp_d / exp_d.sum(axis=1, keepdims=True)
+    return labels, {"model": km, "proba": proba}
 
 
 def _cluster_srsc(features_scaled, df_all, k,

@@ -44,8 +44,8 @@ def save_centroids_json(centroids, output_dir):
                    for k, feat in centroids.items()}, f, indent=2)
 
 
-def export_results(df_scaled, parameters, habitat_labels, output_dir):
-    """Export voxel-level results with habitat labels to CSV."""
+def export_results(df_scaled, parameters, habitat_labels, output_dir, proba=None):
+    """Export voxel-level results with habitat labels (and optional GMM proba) to CSV."""
     df_export = df_scaled.copy()
     df_export['Habitat_label'] = df_export['Habitat'].map(
         lambda h: habitat_labels.get(int(h), f'Habitat {h}')
@@ -56,12 +56,124 @@ def export_results(df_scaled, parameters, habitat_labels, output_dir):
     # multi_mouse_discovery to compute centroids in a 7-feature space while
     # the comparative pipeline uses 6, producing different K selection and
     # therefore different meta-habitats between the standalone app and compare.
+    p_cols = []
+    if proba is not None:
+        for c in range(proba.shape[1]):
+            col_name = f'P_H{c}'
+            df_export[col_name] = proba[:, c]
+            p_cols.append(col_name)
     save_cols = (['X', 'Y', 'Slice']
                  + [p for p in parameters if p in df_export.columns]
-                 + ['Habitat', 'Habitat_label'])
+                 + ['Habitat', 'Habitat_label']
+                 + p_cols)
     csv_path = os.path.join(output_dir, 'habitats_result.csv')
     df_export[save_cols].to_csv(csv_path, index=False)
     print(f"Results saved : {csv_path}")
+
+
+def generate_probmap_pdf(df, parameters, proba, output_dir):
+    """
+    Save a multi-page PDF of per-habitat probability maps.
+
+    One page per slice that contains tumor voxels.
+    Each page shows k panels: grayscale reference MRI (MTR preferred) with
+    a colour overlay whose alpha = P(Hi | voxel).
+
+    Parameters
+    ----------
+    df      : DataFrame with X, Y, Slice and at least one MRI parameter column
+    proba   : ndarray (n_voxels, k)
+    """
+    if proba is None or proba.shape[0] != len(df):
+        print("  [!] generate_probmap_pdf: proba shape mismatch — skipped")
+        return None
+
+    from config import HABITAT_COLORS_HEX
+
+    k       = proba.shape[1]
+    p_cols  = [f'P_H{c}' for c in range(k)]
+    df_plot = df.copy()
+    for c in range(k):
+        df_plot[p_cols[c]] = proba[:, c]
+
+    ref_order = ['MTR', 'T2', 'T2star', 'DTI-FA', 'DTI-AD', 'DTI-RD']
+    ref_param = next((p for p in ref_order if p in df_plot.columns),
+                     parameters[0] if parameters else None)
+    if ref_param is None:
+        print("  [!] generate_probmap_pdf: no reference parameter — skipped")
+        return None
+
+    slices  = sorted(df_plot['Slice'].dropna().astype(int).unique())
+    n_cols  = min(k, 3)
+    n_rows  = (k + n_cols - 1) // n_cols
+    fig_w   = max(n_cols * 3.8, 8.0)
+    fig_h   = n_rows * 3.8 + 1.0
+
+    pdf_path = os.path.join(output_dir, '7_probmap.pdf')
+
+    with PdfPages(pdf_path) as pdf:
+        for slice_idx in slices:
+            df_sl = df_plot[df_plot['Slice'].astype(int) == slice_idx]
+            if len(df_sl) == 0:
+                continue
+
+            x_vals  = df_sl['X'].values.astype(int)
+            y_vals  = df_sl['Y'].values.astype(int)
+            x_min, x_max = int(x_vals.min()), int(x_vals.max())
+            y_min, y_max = int(y_vals.min()), int(y_vals.max())
+            W  = x_max - x_min + 1
+            H  = y_max - y_min + 1
+            xs = x_vals - x_min
+            ys = y_vals - y_min
+
+            ref_img = np.zeros((H, W), dtype=float)
+            mask    = np.zeros((H, W), dtype=bool)
+            ref_vals = df_sl[ref_param].values if ref_param in df_sl.columns \
+                       else np.zeros(len(df_sl))
+            ref_img[ys, xs] = ref_vals
+            mask[ys, xs]    = True
+
+            vals  = ref_img[mask]
+            v_min = float(np.nanmin(vals)) if len(vals) else 0.0
+            v_max = float(np.nanmax(vals)) if len(vals) else 1.0
+            ref_norm = np.where(mask, (ref_img - v_min) / max(v_max - v_min, 1e-8), 0.0)
+            extent  = [x_min - 0.5, x_max + 0.5, y_min - 0.5, y_max + 0.5]
+
+            fig, ax_grid = plt.subplots(n_rows, n_cols,
+                                        figsize=(fig_w, fig_h), squeeze=False)
+            axes_flat = [ax_grid[r][c] for r in range(n_rows) for c in range(n_cols)]
+
+            for i, p_col in enumerate(p_cols):
+                ax = axes_flat[i]
+                ax.imshow(ref_norm, cmap='gray', vmin=0, vmax=1,
+                          origin='lower', interpolation='nearest', extent=extent)
+                proba_img = np.zeros((H, W), dtype=float)
+                proba_img[ys, xs] = df_sl[p_col].values
+                hex_c = HABITAT_COLORS_HEX[i % len(HABITAT_COLORS_HEX)]
+                r_c = int(hex_c[1:3], 16) / 255.0
+                g_c = int(hex_c[3:5], 16) / 255.0
+                b_c = int(hex_c[5:7], 16) / 255.0
+                rgba = np.zeros((H, W, 4), dtype=float)
+                rgba[..., 0] = r_c
+                rgba[..., 1] = g_c
+                rgba[..., 2] = b_c
+                rgba[..., 3] = np.where(mask, proba_img, 0.0)
+                ax.imshow(rgba, origin='lower', interpolation='nearest', extent=extent)
+                ax.set_title(f'H{i}', fontsize=11, fontweight='bold')
+                ax.axis('off')
+
+            for i in range(k, n_rows * n_cols):
+                axes_flat[i].set_visible(False)
+
+            fig.suptitle(
+                f"Probability maps  —  Slice {slice_idx}  —  ref: {ref_param}",
+                fontsize=12, fontweight='bold')
+            fig.tight_layout(rect=[0, 0, 1, 0.96])
+            pdf.savefig(fig, bbox_inches='tight', dpi=150)
+            plt.close(fig)
+
+    print(f"Probability maps PDF saved : {pdf_path}")
+    return pdf_path
 
 
 def generate_report_pdf(output_dir, df_scaled, parameters,

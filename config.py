@@ -32,6 +32,10 @@ KMEANS_GAP_GUARD = False
 
 # --- Labeling ---
 UNDETERMINED_THRESHOLD = 0.3  # Max |robust-scaled value| to flag as Bulk tumor
+# WS labeler abstention: clusters with max label probability below this are
+# assigned 'Unknown' instead of being forced into the best-matching label.
+# 0.0 = disabled (every cluster gets a label).  Suggested value: 0.35.
+WS_ABSTENTION_THR = 0.0
 
 # --- Napari ---
 NAPARI_OPACITY = 0.8

@@ -7,9 +7,9 @@ Pour chaque souris du GT :
   3. Compare la prédiction au label GT
 
 Sorties :
-  - Précision globale et par label
-  - Matrice de confusion
-  - Détail des erreurs Hypoxic/vascular (quelles LF ont voté / abstenu)
+  - Précision globale + classification_report (precision/recall/F1 par classe)
+  - Matrice de confusion (texte + figure PNG)
+  - Détail des erreurs Hypoxic/vascular
   - Analyse LF (couverture, conflits)
 
 Usage :
@@ -18,6 +18,11 @@ Usage :
 
 import sys, os, json, math
 from collections import defaultdict
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import numpy as np
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -108,27 +113,24 @@ for animal_id, gt_clusters in gt_all.items():
                 hyp_errors.append(entry)
 
 # -- Précision globale ------------------------------------------------
+from sklearn.metrics import classification_report, confusion_matrix as sk_cm
+
 n_total   = len(all_true)
 n_correct = sum(t == p for t, p in zip(all_true, all_pred))
 print(f"\nClusters GT évalués : {n_total}")
 print(f"Précision globale   : {n_correct}/{n_total} = {100*n_correct/n_total:.1f}%")
 
-# -- Précision par label ----------------------------------------------
-print("\n-- Précision par label ----------------------------------------─")
-for lbl in LABELS:
-    indices = [i for i, t in enumerate(all_true) if t == lbl]
-    if not indices:
-        continue
-    correct = sum(all_pred[i] == lbl for i in indices)
-    print(f"  {lbl:<28} {correct:>2}/{len(indices):>2}  "
-          f"({100*correct/len(indices):>5.1f}%)")
+# -- Classification report (sklearn) ---------------------------------
+present     = sorted(set(all_true) | set(all_pred),
+                     key=lambda x: LABELS.index(x) if x in LABELS else 999)
+print("\n-- Classification Report (sklearn) ----------------------------─")
+print(classification_report(all_true, all_pred, labels=present,
+                             zero_division=0, target_names=present))
 
-# -- Matrice de confusion --------------------------------------------─
-print("\n-- Matrice de confusion (lignes=GT, colonnes=pred) ------------─")
-present     = sorted(set(all_true) | set(all_pred), key=LABELS.index)
-col_w       = 10
-_row_label  = "GT / Pred"
-header      = f"{_row_label:<28}" + "".join(f"{l[:col_w-1]:>{col_w}}" for l in present)
+# -- Matrice de confusion (texte) ------------------------------------
+print("-- Matrice de confusion (lignes=GT, colonnes=pred) ------------─")
+col_w      = 10
+header     = f"{'GT / Pred':<28}" + "".join(f"{l[:col_w-1]:>{col_w}}" for l in present)
 print(header)
 print("-" * len(header))
 for true_lbl in present:
@@ -139,6 +141,37 @@ for true_lbl in present:
         cell = f"{cnt:>{col_w}}" if cnt > 0 else f"{'·':>{col_w}}"
         row += cell
     print(row)
+
+# -- Figure : heatmap de la matrice de confusion ---------------------
+cm_arr  = sk_cm(all_true, all_pred, labels=present)
+short   = [l.replace("Hypoxic/vascular", "Hypoxic/\nvasc.")
+            .replace("Cellular/proliferative", "Cellular/\nprolif.")
+            .replace("Astrocyte barrier", "Astrocyte\nbarrier") for l in present]
+n_lbl   = len(present)
+fig_sz  = max(5, n_lbl * 1.2)
+fig, ax = plt.subplots(figsize=(fig_sz + 1, fig_sz))
+im      = ax.imshow(cm_arr, cmap='Blues', vmin=0)
+ax.set_xticks(range(n_lbl)); ax.set_yticks(range(n_lbl))
+ax.set_xticklabels(short, rotation=45, ha='right', fontsize=9)
+ax.set_yticklabels(short, fontsize=9)
+thresh = cm_arr.max() / 2.0
+for i in range(n_lbl):
+    for j in range(n_lbl):
+        val   = int(cm_arr[i, j])
+        color = 'white' if val > thresh else 'black'
+        ax.text(j, i, str(val) if val > 0 else '·',
+                ha='center', va='center', fontsize=11, color=color)
+ax.set_xlabel("Predicted label", fontsize=11)
+ax.set_ylabel("True label (GT)", fontsize=11)
+ax.set_title(f"WS Labeler — Confusion Matrix\n"
+             f"Accuracy {n_correct}/{n_total} = {100*n_correct/n_total:.1f}%",
+             fontsize=12, fontweight='bold')
+plt.colorbar(im, ax=ax, label='Count')
+fig.tight_layout()
+fig_path = os.path.join(os.path.dirname(__file__), "eval_confusion_matrix.png")
+fig.savefig(fig_path, dpi=150, bbox_inches='tight')
+plt.close()
+print(f"\n[Figure saved → {fig_path}]")
 
 # -- Détail des erreurs Hypoxic --------------------------------------─
 print(f"\n-- Hypoxic/vascular : {len(hyp_correct)} corrects / "

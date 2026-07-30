@@ -205,6 +205,14 @@ def loo_cross_validation(animal_runs, gt_json):
     total_correct = total_count = 0
     errors = []
 
+    # Per-class tracking for precision / recall
+    from collections import defaultdict
+    class_tp  = defaultdict(int)   # true positive per class
+    class_fp  = defaultdict(int)   # false positive per class
+    class_fn  = defaultdict(int)   # false negative per class
+    loo_all_true = []
+    loo_all_pred = []
+
     print(f"\n{'Animal':<22} {'OK':>4} {'N':>4} {'Acc':>7}  Erreurs")
     print("-" * 60)
 
@@ -226,12 +234,19 @@ def loo_cross_validation(animal_runs, gt_json):
         for c, true_lbl in animal_gt.items():
             if c not in probas:
                 continue
-            pred = max(probas[c], key=probas[c].get)
+            pred      = max(probas[c], key=probas[c].get)
+            base_true = _base_label(true_lbl)
+            base_pred = _base_label(pred)
+            loo_all_true.append(base_true)
+            loo_all_pred.append(base_pred)
             # Compare at base-label level so sub-type differences don't penalize WS
-            if _base_label(pred) == _base_label(true_lbl):
+            if base_pred == base_true:
                 a_correct += 1
                 total_correct += 1
+                class_tp[base_true] += 1
             else:
+                class_fn[base_true] += 1
+                class_fp[base_pred] += 1
                 row_errors.append(
                     f"c{c}: pred={pred} true={true_lbl} p={probas[c][pred]:.2f}")
                 errors.append(
@@ -247,6 +262,25 @@ def loo_cross_validation(animal_runs, gt_json):
     overall = total_correct / total_count if total_count > 0 else 0.0
     print("-" * 60)
     print(f"{'LOO-CV TOTAL':<22} {total_correct:>4} {total_count:>4} {overall:>7.1%}")
+
+    # -- Per-class precision / recall / F1 ----------------------------
+    all_classes = sorted(set(loo_all_true) | set(loo_all_pred),
+                         key=lambda x: LABELS.index(x) if x in LABELS else 999)
+    print(f"\n{'-- Per-class LOO-CV metrics ':-<60}")
+    print(f"  {'Label':<28} {'Prec':>7} {'Recall':>8} {'F1':>7} {'Support':>8}")
+    print(f"  {'-'*55}")
+    for lbl in all_classes:
+        tp = class_tp[lbl]
+        fp = class_fp[lbl]
+        fn = class_fn[lbl]
+        support  = tp + fn
+        if support == 0:
+            continue
+        prec   = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1     = (2 * prec * recall / (prec + recall)) if (prec + recall) > 0 else 0.0
+        flag   = "  ⚠" if recall < 0.5 else ""
+        print(f"  {lbl:<28} {prec:>7.2f} {recall:>8.2f} {f1:>7.2f} {support:>8}{flag}")
 
     return total_correct, total_count, overall
 

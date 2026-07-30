@@ -28,6 +28,7 @@ from config import (
     MRF_ENABLED, MRF_LAMBDA, MRF_CONFIDENCE_THR,
     HIERARCHICAL_ENABLED,
     DTOPO_JOINT_WEIGHT, DTOPO_MIN_NECROSIS_FRACTION,
+    WS_ABSTENTION_THR,
 )
 from pipeline.spatial import (
     prepare_features, analyze_spatial_coherence,
@@ -39,7 +40,7 @@ from pipeline.selection  import select_optimal_k
 from pipeline.clustering import run_clustering, run_clustering_with_size_guard
 from pipeline.labeling   import show_habitat_map, _label_dialog
 from pipeline.labeling_ws import label_clusters_ws
-from pipeline.export     import export_results, generate_report_pdf, save_habitat_mask, save_run_meta, save_centroids_json
+from pipeline.export     import export_results, generate_report_pdf, generate_probmap_pdf, save_habitat_mask, save_run_meta, save_centroids_json
 from compare_v4          import run_comparison_v4
 from i18n                import t, get_lang, set_lang, display_label, get_method_info
 from visualization.plots import (
@@ -579,6 +580,20 @@ class HabitatApp(tk.Tk):
         self._notebook      = None   # reference kept for tab-restore on rebuild
         self._active_tab    = 0
 
+        # Probability maps tab
+        self._probmap_folder       = tk.StringVar(value="")
+        self._probmap_ref          = tk.StringVar(value="MTR")
+        self._probmap_slice_var    = tk.IntVar(value=0)
+        self._probmap_canvas       = None
+        self._probmap_df           = None
+        self._probmap_plot_frame   = None
+        self._probmap_status_lbl   = None
+        self._probmap_slice_slider = None
+        self._probmap_slice_lbl    = None
+        self._probmap_ref_cb       = None
+        self._probmap_open_btn     = None
+        self._probmap_pdf_path     = None
+
         self._build_ui()
         self.listen_to_queue()
 
@@ -809,6 +824,7 @@ class HabitatApp(tk.Tk):
         self.tab6 = ttk.Frame(notebook)
         self.tab7 = ttk.Frame(notebook)
         self.tab8 = ttk.Frame(notebook)
+        self.tab9 = ttk.Frame(notebook)
 
         notebook.add(self.tab1, text=t("tab_clustering"))
         notebook.add(self.tab4, text=t("tab_comparison"))
@@ -816,6 +832,7 @@ class HabitatApp(tk.Tk):
         notebook.add(self.tab6, text=t("tab_joint"))
         notebook.add(self.tab7, text=t("tab_compare"))
         notebook.add(self.tab8, text=t("tab_atlas"))
+        notebook.add(self.tab9, text=t("tab_probmaps"))
 
         self._build_tab_clustering(self.tab1)
         self._build_tab_comparison(self.tab4)
@@ -823,6 +840,7 @@ class HabitatApp(tk.Tk):
         self._build_tab_joint(self.tab6)
         self._build_tab_comparative(self.tab7)
         self._build_tab_atlas(self.tab8)
+        self._build_tab_probmaps(self.tab9)
 
         # Swap action buttons when the user switches tabs
         _action_map = {
@@ -854,8 +872,9 @@ class HabitatApp(tk.Tk):
                 f.pack_forget()
             if idx == 1:
                 _active_comp_frame().pack(fill='x')
-            else:
-                _action_map.get(idx, self._action_main).pack(fill='x')
+            elif idx in _action_map:
+                _action_map[idx].pack(fill='x')
+            # tab9 (Prob. Maps, idx=6) is a standalone viewer — no action frame needed
 
         notebook.bind('<<NotebookTabChanged>>', _on_tab_change)
         self._comp_sub.bind('<<NotebookTabChanged>>',
@@ -1619,9 +1638,23 @@ class HabitatApp(tk.Tk):
                     self._write_log(t("log_napari_ready"), tag="ok")
                     self.btn_napari.config(state='normal')
                     self.btn_run.config(state='normal', text=t("run_analysis"))
+                    if task.get("probmap_dir"):
+                        self._probmap_folder.set(task["probmap_dir"])
+                        self._probmap_pdf_path = task.get("probmap_pdf")
+                        self._write_log(t("probmap_ready_log"), tag="ok")
+                        self._probmap_load_quietly()
+                        if self._probmap_pdf_path and hasattr(self, '_probmap_open_btn'):
+                            self._probmap_open_btn.config(state='normal')
 
                 elif action == "done":
                     self.btn_run.config(state='normal', text=t("run_analysis"))
+                    if task.get("probmap_dir"):
+                        self._probmap_folder.set(task["probmap_dir"])
+                        self._probmap_pdf_path = task.get("probmap_pdf")
+                        self._write_log(t("probmap_ready_log"), tag="ok")
+                        self._probmap_load_quietly()
+                        if self._probmap_pdf_path and hasattr(self, '_probmap_open_btn'):
+                            self._probmap_open_btn.config(state='normal')
 
                 elif action == "ia_done":
                     if self.btn_ia_run:
@@ -2996,6 +3029,285 @@ class HabitatApp(tk.Tk):
                    ).pack(side='left', padx=8)
 
     # ------------------------------------------------------------------
+    # Probability Maps tab
+    # ------------------------------------------------------------------
+
+    def _build_tab_probmaps(self, parent):
+        px  = THEME["pad_x"]
+
+        # ── Header ──────────────────────────────────────────────────────────
+        hdr = ttk.Frame(parent)
+        hdr.pack(fill='x', padx=px, pady=(10, 4))
+        ttk.Label(hdr, text=t("probmap_title"),
+                  style="Title.TLabel").pack(anchor='w')
+        ttk.Label(hdr, text=t("probmap_desc"),
+                  style="Sub.TLabel", wraplength=720, justify='left').pack(anchor='w', pady=(2, 0))
+        ttk.Separator(hdr, orient='horizontal').pack(fill='x', pady=6)
+
+        # ── Folder selector ─────────────────────────────────────────────────
+        row1 = ttk.Frame(parent)
+        row1.pack(fill='x', padx=px, pady=(0, 4))
+        ttk.Label(row1, text=t("probmap_folder_label")).pack(side='left')
+        ttk.Entry(row1, textvariable=self._probmap_folder, width=50).pack(side='left', padx=6)
+        ttk.Button(row1, text=t("browse"),
+                   command=self._probmap_browse).pack(side='left')
+
+        # ── Controls row ────────────────────────────────────────────────────
+        row2 = ttk.Frame(parent)
+        row2.pack(fill='x', padx=px, pady=(0, 4))
+
+        ttk.Label(row2, text=t("probmap_ref_label")).pack(side='left')
+        self._probmap_ref_cb = ttk.Combobox(
+            row2, textvariable=self._probmap_ref,
+            values=['MTR', 'T2', 'T2star', 'DTI-FA', 'DTI-AD', 'DTI-RD'],
+            width=10, state='readonly')
+        self._probmap_ref_cb.pack(side='left', padx=(4, 20))
+        self._probmap_ref_cb.bind('<<ComboboxSelected>>', lambda e: self._probmap_draw())
+
+        ttk.Label(row2, text=t("probmap_slice_label")).pack(side='left')
+        self._probmap_slice_slider = ttk.Scale(
+            row2, from_=0, to=0,
+            variable=self._probmap_slice_var,
+            orient='horizontal', length=260,
+            command=self._probmap_on_slice_change)
+        self._probmap_slice_slider.pack(side='left', padx=4)
+        self._probmap_slice_lbl = ttk.Label(row2, text="—", width=5)
+        self._probmap_slice_lbl.pack(side='left', padx=(2, 16))
+
+        ttk.Button(row2, text=t("probmap_load_btn"),
+                   command=self._probmap_load,
+                   style="Primary.TButton").pack(side='left', padx=4)
+
+        # ── PDF row ─────────────────────────────────────────────────────────
+        row3 = ttk.Frame(parent)
+        row3.pack(fill='x', padx=px, pady=(0, 4))
+        ttk.Label(row3, text=t("probmap_pdf_label"),
+                  style="Sub.TLabel").pack(side='left')
+        self._probmap_open_btn = ttk.Button(
+            row3, text=t("probmap_open_pdf"),
+            command=self._probmap_open_pdf,
+            style="Primary.TButton", state='disabled')
+        self._probmap_open_btn.pack(side='left', padx=6)
+        ttk.Button(row3, text=t("probmap_gen_pdf"),
+                   command=self._probmap_save_pdf,
+                   style="Secondary.TButton").pack(side='left', padx=4)
+
+        # ── Status bar ──────────────────────────────────────────────────────
+        self._probmap_status_lbl = ttk.Label(
+            parent, text=t("probmap_hint"),
+            style="Sub.TLabel", wraplength=740, justify='left')
+        self._probmap_status_lbl.pack(fill='x', padx=px, pady=(0, 4))
+
+        # ── Canvas area (fills remaining space) ─────────────────────────────
+        self._probmap_plot_frame = ttk.Frame(parent, relief='sunken', borderwidth=1)
+        self._probmap_plot_frame.pack(fill='both', expand=True, padx=px, pady=(0, 8))
+
+    def _probmap_browse(self):
+        folder = filedialog.askdirectory(title=t("probmap_folder_label"))
+        if folder:
+            self._probmap_folder.set(folder)
+            self._probmap_load()
+
+    def _probmap_load(self):
+        import pandas as pd
+        folder = self._probmap_folder.get().strip()
+        if not folder:
+            return
+        csv_path = os.path.join(folder, "habitats_result.csv")
+        if not os.path.exists(csv_path):
+            self._probmap_status_lbl.config(text=t("probmap_no_results"))
+            return
+        df = pd.read_csv(csv_path)
+        p_cols = sorted([c for c in df.columns if c.startswith('P_H')])
+        if not p_cols:
+            self._probmap_status_lbl.config(text=t("probmap_no_proba"))
+            return
+        self._probmap_df = df
+
+        # Update slice slider range
+        slices = sorted(df['Slice'].dropna().astype(int).unique())
+        if slices:
+            self._probmap_slice_slider.config(from_=slices[0], to=slices[-1])
+            mid = slices[len(slices) // 2]
+            self._probmap_slice_var.set(mid)
+            self._probmap_slice_lbl.config(text=str(mid))
+
+        # Update available ref params
+        avail = [p for p in ['MTR', 'T2', 'T2star', 'DTI-FA', 'DTI-AD', 'DTI-RD']
+                 if p in df.columns]
+        if self._probmap_ref_cb and avail:
+            self._probmap_ref_cb.config(values=avail)
+        if self._probmap_ref.get() not in avail and avail:
+            self._probmap_ref.set(avail[0])
+
+        self._probmap_draw()
+
+    def _probmap_load_quietly(self):
+        """Pre-load the latest result without raising errors (called from queue listener)."""
+        try:
+            self._probmap_load()
+        except Exception:
+            pass
+
+    def _probmap_open_pdf(self):
+        """Open the already-generated PDF in the system viewer."""
+        path = self._probmap_pdf_path
+        if path and os.path.exists(path):
+            os.startfile(path)
+        else:
+            messagebox.showinfo(t("probmap_title"), t("probmap_no_pdf_yet"))
+
+    def _probmap_save_pdf(self):
+        """Generate probability-map PDF from the currently loaded data and open it."""
+        df = self._probmap_df
+        if df is None:
+            messagebox.showinfo(t("probmap_title"), t("probmap_no_results"))
+            return
+        p_cols = sorted([c for c in df.columns if c.startswith('P_H')])
+        if not p_cols:
+            messagebox.showinfo(t("probmap_title"), t("probmap_no_proba"))
+            return
+
+        import numpy as _np
+        folder   = self._probmap_folder.get().strip()
+        k        = len(p_cols)
+        proba    = _np.column_stack([df[c].values for c in p_cols])
+        ref_order = ['MTR', 'T2', 'T2star', 'DTI-FA', 'DTI-AD', 'DTI-RD']
+        params   = [p for p in ref_order if p in df.columns]
+
+        self._probmap_status_lbl.config(text=t("probmap_generating_pdf"))
+        self.update_idletasks()
+        try:
+            pdf_path = generate_probmap_pdf(df, params, proba, folder)
+        except Exception as exc:
+            self._probmap_status_lbl.config(text=str(exc))
+            return
+        if pdf_path and os.path.exists(pdf_path):
+            self._probmap_pdf_path = pdf_path
+            if self._probmap_open_btn:
+                self._probmap_open_btn.config(state='normal')
+            self._probmap_status_lbl.config(text=f"PDF saved: {pdf_path}")
+            os.startfile(pdf_path)
+        else:
+            self._probmap_status_lbl.config(text=t("probmap_pdf_failed"))
+
+    def _probmap_on_slice_change(self, val):
+        if self._probmap_df is None:
+            return
+        slice_val = int(float(val))
+        slices = sorted(self._probmap_df['Slice'].dropna().astype(int).unique())
+        closest = min(slices, key=lambda s: abs(s - slice_val))
+        self._probmap_slice_var.set(closest)
+        self._probmap_slice_lbl.config(text=str(closest))
+        self._probmap_draw()
+
+    def _probmap_draw(self):
+        import numpy as _np
+        import matplotlib.figure as mplf
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+        df = self._probmap_df
+        if df is None or self._probmap_plot_frame is None:
+            return
+
+        ref_param = self._probmap_ref.get()
+        slice_idx = int(self._probmap_slice_var.get())
+
+        df_slice = df[df['Slice'].astype(int) == slice_idx].copy()
+        if len(df_slice) == 0:
+            self._probmap_status_lbl.config(text=f"No voxels in slice {slice_idx}")
+            return
+
+        p_cols = sorted([c for c in df.columns if c.startswith('P_H')])
+        k      = len(p_cols)
+
+        # Build 2-D coordinate grid for this slice
+        x_vals  = df_slice['X'].values.astype(int)
+        y_vals  = df_slice['Y'].values.astype(int)
+        x_min, x_max = int(x_vals.min()), int(x_vals.max())
+        y_min, y_max = int(y_vals.min()), int(y_vals.max())
+        W  = x_max - x_min + 1
+        H  = y_max - y_min + 1
+        xs = x_vals - x_min
+        ys = y_vals - y_min
+
+        # Reference image (grayscale background)
+        ref_img = _np.zeros((H, W), dtype=float)
+        mask    = _np.zeros((H, W), dtype=bool)
+        ref_vals = df_slice[ref_param].values if ref_param in df_slice.columns \
+                   else _np.zeros(len(df_slice))
+        ref_img[ys, xs] = ref_vals
+        mask[ys, xs]    = True
+
+        # Normalise reference for display
+        vals  = ref_img[mask]
+        v_min = float(_np.nanmin(vals)) if len(vals) else 0.0
+        v_max = float(_np.nanmax(vals)) if len(vals) else 1.0
+        v_rng = max(v_max - v_min, 1e-8)
+        ref_norm = _np.where(mask, (ref_img - v_min) / v_rng, 0.0)
+
+        # Figure layout: up to 3 columns
+        n_cols  = min(k, 3)
+        n_rows  = (k + n_cols - 1) // n_cols
+        fig_w   = max(n_cols * 3.6, 7.0)
+        fig_h   = n_rows * 3.6 + 0.5
+        extent  = [x_min - 0.5, x_max + 0.5, y_min - 0.5, y_max + 0.5]
+        bg_col  = THEME["bg"]
+        txt_col = THEME["text"]
+
+        # Destroy previous canvas widget
+        if self._probmap_canvas is not None:
+            try:
+                self._probmap_canvas.get_tk_widget().destroy()
+            except Exception:
+                pass
+            self._probmap_canvas = None
+
+        fig = mplf.Figure(figsize=(fig_w, fig_h), dpi=96)
+        fig.patch.set_facecolor(bg_col)
+
+        for i, p_col in enumerate(p_cols):
+            ax = fig.add_subplot(n_rows, n_cols, i + 1)
+            ax.set_facecolor(bg_col)
+
+            # Grayscale reference background
+            ax.imshow(ref_norm, cmap='gray', vmin=0, vmax=1,
+                      origin='lower', interpolation='nearest', extent=extent)
+
+            # Probability colour overlay (RGBA with alpha = probability)
+            proba_img        = _np.zeros((H, W), dtype=float)
+            proba_img[ys, xs] = df_slice[p_col].values
+            hex_c = HABITAT_COLORS_HEX[i % len(HABITAT_COLORS_HEX)]
+            r = int(hex_c[1:3], 16) / 255.0
+            g = int(hex_c[3:5], 16) / 255.0
+            b = int(hex_c[5:7], 16) / 255.0
+            rgba = _np.zeros((H, W, 4), dtype=float)
+            rgba[..., 0] = r
+            rgba[..., 1] = g
+            rgba[..., 2] = b
+            rgba[..., 3] = _np.where(mask, proba_img, 0.0)
+            ax.imshow(rgba, origin='lower', interpolation='nearest', extent=extent)
+
+            ax.set_title(p_col.replace('P_', ''), color=txt_col, fontsize=9, pad=2)
+            ax.axis('off')
+
+        # Hide any unused subplot slots
+        for i in range(k, n_rows * n_cols):
+            ax_extra = fig.add_subplot(n_rows, n_cols, i + 1)
+            ax_extra.set_visible(False)
+
+        fig.suptitle(
+            f"Probability maps  —  slice {slice_idx}  —  ref: {ref_param}",
+            color=txt_col, fontsize=10, y=1.01)
+        fig.tight_layout(rect=[0, 0, 1, 0.98])
+
+        self._probmap_canvas = FigureCanvasTkAgg(fig, master=self._probmap_plot_frame)
+        self._probmap_canvas.draw()
+        self._probmap_canvas.get_tk_widget().pack(fill='both', expand=True)
+        self._probmap_status_lbl.config(
+            text=f"{k} habitats  —  {len(df_slice)} voxels  —  slice {slice_idx}")
+
+    # ------------------------------------------------------------------
     # Validation and launch
     # ------------------------------------------------------------------
 
@@ -3208,7 +3520,28 @@ class HabitatApp(tk.Tk):
                 for _c in hier_meta['periphery_cluster_ids']:
                     zone_map[_c] = 'periphery'
             three_pass = label_clusters_ws(centroids, parameters,
-                                            zone_map=zone_map)
+                                            zone_map=zone_map,
+                                            abstention_thr=WS_ABSTENTION_THR)
+
+            # ── WS coverage + per-label confidence report ────────────
+            n_abstained = sum(1 for r in three_pass.values() if r.get('abstained'))
+            n_total_cl  = len(three_pass)
+            if n_abstained > 0:
+                log(f"  [WS] {n_abstained}/{n_total_cl} clusters below confidence "
+                    f"threshold ({WS_ABSTENTION_THR:.2f}) → labeled 'Unknown'",
+                    tag="ok")
+            conf_levels = {'high': 0, 'medium': 0, 'low': 0}
+            for r in three_pass.values():
+                conf_levels[r['confidence']] = conf_levels.get(r['confidence'], 0) + 1
+            log(f"  [WS] Label confidence — "
+                f"high:{conf_levels['high']}  "
+                f"medium:{conf_levels['medium']}  "
+                f"low:{conf_levels['low']}  "
+                f"(total {n_total_cl} clusters)")
+            for c_id, r in sorted(three_pass.items()):
+                flag = " ⚠ low" if r['confidence'] == 'low' else ""
+                log(f"      H{c_id} → {r['label']:<28}  P={r['score']:.2f}  "
+                    f"[{r['confidence']}]{flag}")
 
             # ── Step 5 (option): MRF light boundary correction ───────
             proba = extra_info.get('proba')
@@ -3222,6 +3555,14 @@ class HabitatApp(tk.Tk):
                 labels, df_all, proba, best_k, out_dir)
             df_scaled['label_confidence'] = confidence_arr
             df_scaled['label_ambiguous']  = ambiguous_arr.astype(int)
+
+            # ── Voxel-level uncertainty summary ──────────────────────
+            n_vox       = len(confidence_arr)
+            n_unc_low   = int((confidence_arr < 0.5).sum())
+            n_unc_high  = int((confidence_arr >= 0.8).sum())
+            log(f"  [Spatial] Voxel confidence — "
+                f"{n_unc_high} ({100*n_unc_high/max(n_vox,1):.0f}%) high (≥0.8)  "
+                f"{n_unc_low} ({100*n_unc_low/max(n_vox,1):.0f}%) uncertain (<0.5)")
 
             n_micro = sum(r.get('micro_components', 0) for r in coh_report.values())
             if n_micro > 0:
@@ -3263,7 +3604,8 @@ class HabitatApp(tk.Tk):
             plot_habitat_barchart(df_scaled, parameters, habitat_labels, out_dir)
             plot_heatmap_profiles(df_scaled, parameters, habitat_labels, best_k, out_dir)
             plot_radar_profiles(df_scaled, parameters, habitat_labels, out_dir)
-            export_results(df_scaled, parameters, habitat_labels, out_dir)
+            export_results(df_scaled, parameters, habitat_labels, out_dir, proba=proba)
+            probmap_pdf = generate_probmap_pdf(df_scaled, parameters, proba, out_dir)
             save_run_meta(scaling_info, cl_stats, out_dir)
             generate_report_pdf(out_dir, df_scaled, parameters,
                                 habitat_labels, best_k, method)
@@ -3275,13 +3617,16 @@ class HabitatApp(tk.Tk):
                 mask_path   = save_habitat_mask(nifti, df_scaled, df_all, out_dir)
                 labels_path = os.path.join(out_dir, 'habitat_labels.json')
                 self.queue.put({
-                    "type"       : "napari_ready",
-                    "nifti"      : nifti,
-                    "mask_path"  : mask_path,
-                    "labels_path": labels_path,
+                    "type"        : "napari_ready",
+                    "nifti"       : nifti,
+                    "mask_path"   : mask_path,
+                    "labels_path" : labels_path,
+                    "probmap_dir" : out_dir,
+                    "probmap_pdf" : probmap_pdf,
                 })
             else:
-                self.queue.put({"type": "done"})
+                self.queue.put({"type": "done", "probmap_dir": out_dir,
+                                "probmap_pdf": probmap_pdf})
 
         except Exception as e:
             self.queue.put({"type": "error",

@@ -942,6 +942,57 @@ _TR = {
                            "fr": "Comment interpréter les résultats",
                            "es": "Cómo interpretar los resultados"},
 
+    # ── Probability Maps tab ─────────────────────────────────────────────────
+    "tab_probmaps"          : {"en": "Prob. Maps",      "fr": "Cartes Proba",    "es": "Mapas Prob."},
+    "probmap_title"         : {"en": "Probability Maps",
+                               "fr": "Cartes de Probabilité",
+                               "es": "Mapas de Probabilidad"},
+    "probmap_desc"          : {
+        "en": "Visualise per-habitat assignment probability on a reference MRI image. "
+               "Each panel shows one habitat (H0…Hk) with colour intensity = P(Hi | voxel). "
+               "Run a Classic analysis first, or browse to an existing result folder.",
+        "fr": "Visualisez la probabilité d'appartenance par habitat sur une image IRM de référence. "
+               "Chaque panneau montre un habitat (H0…Hk) avec l'intensité couleur = P(Hi | voxel). "
+               "Lancez d'abord une analyse Classique, ou parcourez un dossier de résultats existant.",
+        "es": "Visualice la probabilidad de asignación por hábitat sobre una imagen MRI de referencia. "
+               "Cada panel muestra un hábitat (H0…Hk) con intensidad de color = P(Hi | voxel). "
+               "Ejecute primero un análisis Clásico, o explore una carpeta de resultados existente."},
+    "probmap_folder_label"  : {"en": "Result folder:",  "fr": "Dossier résultats :", "es": "Carpeta resultados:"},
+    "probmap_ref_label"     : {"en": "Reference param:", "fr": "Paramètre réf. :", "es": "Param. referencia:"},
+    "probmap_slice_label"   : {"en": "Slice:",          "fr": "Coupe :",           "es": "Corte:"},
+    "probmap_load_btn"      : {"en": "Load / Refresh",  "fr": "Charger / Rafraîchir", "es": "Cargar / Actualizar"},
+    "probmap_hint"          : {
+        "en": "Browse to a result folder containing habitats_result.csv with P_H* columns, "
+               "or run a Classic analysis — the latest result will load automatically.",
+        "fr": "Parcourez un dossier contenant habitats_result.csv avec colonnes P_H*, "
+               "ou lancez une analyse Classique — le dernier résultat se chargera automatiquement.",
+        "es": "Explore una carpeta con habitats_result.csv con columnas P_H*, "
+               "o ejecute un análisis Clásico — el último resultado se cargará automáticamente."},
+    "probmap_no_results"    : {
+        "en": "No habitats_result.csv found in this folder. Run the Classic analysis first.",
+        "fr": "Aucun habitats_result.csv trouvé dans ce dossier. Lancez d'abord l'analyse Classique.",
+        "es": "No se encontró habitats_result.csv en esta carpeta. Ejecute primero el análisis Clásico."},
+    "probmap_no_proba"      : {
+        "en": "No probability columns (P_H*) found. Re-run the Classic analysis with this version of the app.",
+        "fr": "Aucune colonne de probabilité (P_H*) trouvée. Relancez l'analyse Classique avec cette version.",
+        "es": "No se encontraron columnas de probabilidad (P_H*). Vuelva a ejecutar el análisis Clásico."},
+    "probmap_ready_log"     : {
+        "en": "Probability maps ready — switch to the Prob. Maps tab to explore.",
+        "fr": "Cartes de probabilité prêtes — basculez sur l'onglet Cartes Proba pour explorer.",
+        "es": "Mapas de probabilidad listos — cambie a la pestaña Mapas Prob. para explorar."},
+    "probmap_pdf_label"     : {"en": "PDF (zoom-ready):", "fr": "PDF (avec zoom) :", "es": "PDF (con zoom):"},
+    "probmap_open_pdf"      : {"en": "Open last PDF",     "fr": "Ouvrir le dernier PDF", "es": "Abrir último PDF"},
+    "probmap_gen_pdf"       : {"en": "Generate & Open PDF", "fr": "Générer et ouvrir PDF", "es": "Generar y abrir PDF"},
+    "probmap_no_pdf_yet"    : {
+        "en": "No PDF found. Run a Classic analysis or click 'Generate & Open PDF'.",
+        "fr": "Aucun PDF trouvé. Lancez une analyse Classique ou cliquez 'Générer et ouvrir PDF'.",
+        "es": "No se encontró PDF. Ejecute análisis Clásico o haga clic en 'Generar y abrir PDF'."},
+    "probmap_generating_pdf": {"en": "Generating PDF…", "fr": "Génération du PDF…", "es": "Generando PDF…"},
+    "probmap_pdf_failed"    : {
+        "en": "PDF generation failed — check the console for details.",
+        "fr": "La génération du PDF a échoué — consultez la console.",
+        "es": "Error al generar el PDF — consulte la consola."},
+
     # ── Window titles ────────────────────────────────────────────────────────
     "wintitle_dtopo_help"   : {"en": "d_topo spatial feature — help",
                                "fr": "Caractéristique spatiale d_topo — aide",
