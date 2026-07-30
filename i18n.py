@@ -36,12 +36,8 @@ _TR = {
                                "fr": "▶  Lancer comparaison inter-méthode",
                                "es": "▶  Ejecutar comparación inter-método"},
     "running"              : {"en": "⏳  Running…",      "fr": "⏳  En cours…",      "es": "⏳  Ejecutando…"},
-    "confirm"              : {"en": "Confirm",           "fr": "Confirmer",          "es": "Confirmar"},
 
     # ── Tabs ────────────────────────────────────────────────────────────────
-    "tab_files"            : {"en": "  Files  ",         "fr": "  Fichiers  ",       "es": "  Archivos  "},
-    "tab_method"           : {"en": "  Method  ",        "fr": "  Méthode  ",        "es": "  Método  "},
-    "tab_output"           : {"en": "  Output  ",        "fr": "  Sortie  ",         "es": "  Salida  "},
     "tab_comparison"       : {"en": "  Comparison  ",    "fr": "  Comparaison  ",    "es": "  Comparación  "},
     "tab_ia"               : {"en": "  Inter-animal  ",  "fr": "  Inter-animal  ",   "es": "  Inter-animal  "},
     "tab_im"               : {"en": "  Inter-method  ",  "fr": "  Inter-méthode  ",  "es": "  Inter-método  "},
@@ -1326,6 +1322,8 @@ def t(key: str, **kwargs) -> str:
     """Return the translated string for *key* in the current language."""
     row = _TR.get(key)
     if row is None:
+        import sys
+        print(f"[i18n] missing key: {key!r}", file=sys.stderr)
         return key
     text = row.get(_LANG, row.get("en", key))
     return text.format(**kwargs) if kwargs else text

@@ -28,6 +28,7 @@
 
 import os
 import json
+import math
 import datetime
 import warnings
 import numpy as np
@@ -192,7 +193,6 @@ def _balanced_chunks(lst, max_per_page):
     n = len(lst)
     if n <= max_per_page:
         return [lst]
-    import math
     n_pages   = math.ceil(n / max_per_page)
     base, rem = divmod(n, n_pages)
     chunks, start = [], 0
@@ -909,8 +909,6 @@ def _fig_radar_charts(instances, instances_by_label, parameters, output_dir):
     Axes = MRI parameters. Values = mean centroid (robust-scaled, 0 = tumor median).
     Overlap of lines = concordant; separation = discordant.
     """
-    import math
-
     labels  = list(instances_by_label.keys())
     sources = list(dict.fromkeys(i["source"] for i in instances))
     n_par   = len(parameters)
@@ -1187,8 +1185,6 @@ def _fig_archetype_radar(archetypes, instances_by_label, parameters, label_coh,
     Only labels with at least one CL-relative centroid are shown.
     Returns the output path, or None when no CL data is available.
     """
-    import math
-
     labels_with_cl = [l for l in archetypes]
     if not labels_with_cl:
         return None

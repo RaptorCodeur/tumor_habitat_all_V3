@@ -640,7 +640,7 @@ def _select_k_core(features, k_max, method, n_init, df_sub=None,
 
     else:  # kmeans or srsc — Gap + Silhouette
         if len(features) < 10:
-            print(f"    Core: trop peu de voxels ({len(features)}) → k=1")
+            print(f"    Core: too few voxels ({len(features)}) → k=1")
             return 1
         k_max_safe = min(k_max, max(2, len(features) // 5))
         k_range = range(2, k_max_safe + 1)

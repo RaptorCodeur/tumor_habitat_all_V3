@@ -18,6 +18,9 @@ import queue
 import subprocess
 import traceback
 
+import numpy as np
+import pandas as pd
+
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 
@@ -172,6 +175,8 @@ def _apply_theme(root):
                     font=(ff, 9))
     style.configure("Section.TLabel", background=bg, foreground=text,
                     font=(ff, 11, "bold"))
+    style.configure("Title.TLabel",   background=bg, foreground=accent,
+                    font=(ff, 13, "bold"))
 
     style.configure("TNotebook",
                     background=bg, borderwidth=0, tabmargins=[0, 5, 0, 0])
@@ -379,9 +384,6 @@ def _parse_atlas_covariates(names, rows, log=print):
     """
     if not names or not rows:
         return None
-
-    import numpy as np
-    import pandas as pd
 
     n = len(rows)
     columns = []   # list of (col_name, float_list)
@@ -3117,7 +3119,6 @@ class HabitatApp(tk.Tk):
             self._probmap_load()
 
     def _probmap_load(self):
-        import pandas as pd
         folder = self._probmap_folder.get().strip()
         if not folder:
             return
@@ -3924,8 +3925,6 @@ class HabitatApp(tk.Tk):
                          args=(params,), daemon=True).start()
 
     def _run_discovery_pipeline(self, p):
-        import numpy as np
-
         def log(msg, tag=None):
             self.queue.put({"type": "log", "text": msg, "tag": tag})
 
@@ -4119,8 +4118,6 @@ class HabitatApp(tk.Tk):
     def _generate_discovery_text(self, X, meta_labels, meta_stats,
                                   common_params, n_mice, chosen_k,
                                   k_scores, method, mice_data=None):
-        import numpy as np
-
         def _magnitude_label(v):
             av = abs(v)
             if av >= 1.5:
@@ -4955,7 +4952,7 @@ class HabitatApp(tk.Tk):
             hdr = ttk.Frame(inner)
             hdr.pack(fill='x', padx=px, pady=(0, 2))
             for txt_h, w in [(t("dtopo_table_mouse"), 28), (t("dtopo_table_necro"), 10),
-                              ("d_topo", 8), ("Reason", 42)]:
+                              ("Status", 10), ("Reason", 42)]:
                 tk.Label(hdr, text=txt_h, width=w, anchor='w',
                          font=(THEME["font_family"], 9, "bold"),
                          bg=THEME["bg"], fg=THEME["accent"]

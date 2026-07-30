@@ -14,6 +14,8 @@ import matplotlib.image as mpimg
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.colors import ListedColormap
 
+from sklearn.mixture import GaussianMixture
+
 from pipeline.joint_loading  import load_joint_dataset
 from pipeline.selection      import select_optimal_k
 from pipeline.clustering     import run_clustering
@@ -536,7 +538,6 @@ def _compute_joint_dtopo(df_pooled, labels, centroids, common_params,
 
 def _fit_balanced_gmm(features, mouse_ids, k, n_init):
     """Train a GMM on a balanced subsample (VOXELS_PER_MOUSE per mouse)."""
-    from sklearn.mixture import GaussianMixture
     bal = _balanced_sample(features, mouse_ids)
     gmm = GaussianMixture(
         n_components=k, n_init=n_init,
