@@ -464,6 +464,7 @@ class HabitatApp(tk.Tk):
         self.kmeans_guard       = tk.BooleanVar(value=_kmeans_default)
         self.mrf_enabled        = tk.BooleanVar(value=MRF_ENABLED)
         self.hierarchical_enabled = tk.BooleanVar(value=HIERARCHICAL_ENABLED)
+        self.ws_abstention_thr  = tk.DoubleVar(value=WS_ABSTENTION_THR)
 
         self.queue          = queue.Queue()
         self._napari_params = None
@@ -1073,6 +1074,20 @@ class HabitatApp(tk.Tk):
                         text=t("mrf_opt") + f"  (λ={MRF_LAMBDA}, thr={MRF_CONFIDENCE_THR})",
                         variable=self.mrf_enabled,
                         ).pack(anchor='w', padx=px + 4, pady=2)
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=8)
+
+        # ── Section : WS Labeler ──────────────────────────────────────
+        ttk.Label(inner, text=t("ws_section"),
+                  style="Sub.TLabel").pack(anchor='w', padx=px, pady=(0, 4))
+        f_ws = ttk.Frame(inner)
+        f_ws.pack(fill='x', padx=px, pady=2)
+        ttk.Label(f_ws, text=t("ws_abstention_label"), width=30).pack(side='left')
+        ttk.Spinbox(f_ws, from_=0.0, to=1.0, increment=0.05,
+                    textvariable=self.ws_abstention_thr,
+                    width=6, format="%.2f").pack(side='left')
+        ttk.Label(f_ws, text=t("ws_abstention_hint"),
+                  style="Sub.TLabel").pack(side='left', padx=(8, 0))
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=10)
 
@@ -1699,6 +1714,7 @@ class HabitatApp(tk.Tk):
                 elif action == "error":
                     self._write_log(task["text"], tag="err")
                     self.btn_run.config(state='normal', text=t("run_analysis"))
+                    self.btn_napari.config(state='normal')
 
                 self.queue.task_done()
 
@@ -3372,6 +3388,7 @@ class HabitatApp(tk.Tk):
             "kmeans_guard"       : self.kmeans_guard.get(),
             "mrf_enabled"        : self.mrf_enabled.get(),
             "hierarchical_enabled": self.hierarchical_enabled.get(),
+            "ws_abstention_thr"  : self.ws_abstention_thr.get(),
         }
 
         thread = threading.Thread(target=self._run_pipeline,
@@ -3515,16 +3532,17 @@ class HabitatApp(tk.Tk):
                     zone_map[_c] = 'core'
                 for _c in hier_meta['periphery_cluster_ids']:
                     zone_map[_c] = 'periphery'
+            _ws_thr = p.get("ws_abstention_thr", 0.0)
             three_pass = label_clusters_ws(centroids, parameters,
                                             zone_map=zone_map,
-                                            abstention_thr=WS_ABSTENTION_THR)
+                                            abstention_thr=_ws_thr)
 
             # ── WS coverage + per-label confidence report ────────────
             n_abstained = sum(1 for r in three_pass.values() if r.get('abstained'))
             n_total_cl  = len(three_pass)
             if n_abstained > 0:
                 log(f"  [WS] {n_abstained}/{n_total_cl} clusters below confidence "
-                    f"threshold ({WS_ABSTENTION_THR:.2f}) → labeled 'Unknown'",
+                    f"threshold ({_ws_thr:.2f}) → labeled 'Unknown'",
                     tag="ok")
             conf_levels = {'high': 0, 'medium': 0, 'low': 0}
             for r in three_pass.values():
@@ -3891,7 +3909,9 @@ class HabitatApp(tk.Tk):
             out_root = os.path.join(default_dir, self._disc_output_name.get())
 
         params = {
-            "animals"   : [{"files": list(a["files"])} for a in self._disc_animals],
+            "animals"   : [{"files": list(a["files"]),
+                            "group" : a["group_var"].get()}
+                           for a in self._disc_animals],
             "method"    : self._disc_method.get(),
             "k_max"     : self._disc_k_max.get(),
             "n_init"    : self._disc_n_init.get(),

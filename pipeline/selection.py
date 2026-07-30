@@ -186,7 +186,8 @@ def build_spectral_affinity(features_scaled, coords=None,
         sample = features_scaled if n <= 500 else features_scaled[
             np.random.default_rng(RANDOM_SEED).choice(n, 500, replace=False)]
         dists         = pairwise_distances(sample, metric='euclidean')
-        sigma_feature = np.median(dists[dists > 0])
+        pos_dists     = dists[dists > 0]
+        sigma_feature = float(np.median(pos_dists)) if len(pos_dists) > 0 else 1.0
 
     gamma_feature = 1.0 / (2 * sigma_feature ** 2)
     W_feat = rbf_kernel(features_scaled, gamma=gamma_feature).astype(np.float32)
@@ -197,7 +198,8 @@ def build_spectral_affinity(features_scaled, coords=None,
 
     if sigma_spatial is None:
         sp_dists      = pairwise_distances(coords, metric='euclidean')
-        sigma_spatial = np.median(sp_dists[sp_dists > 0])
+        pos_sp_dists  = sp_dists[sp_dists > 0]
+        sigma_spatial = float(np.median(pos_sp_dists)) if len(pos_sp_dists) > 0 else 1.0
 
     gamma_spatial = 1.0 / (2 * sigma_spatial ** 2)
     W_spat = rbf_kernel(coords, gamma=gamma_spatial).astype(np.float32)

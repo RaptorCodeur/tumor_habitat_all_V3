@@ -106,6 +106,15 @@ _TR = {
     "mrf_opt"              : {"en": "MRF light boundary correction  (GMM only — corrects uncertain border voxels)",
                                "fr": "Correction MRF légère des frontières  (GMM uniquement — corrige les voxels incertains de bord)",
                                "es": "Corrección MRF ligera de bordes  (solo GMM — corrige vóxeles de borde inciertos)"},
+    "ws_section"           : {"en": "WS Labeler",
+                               "fr": "WS Labeler",
+                               "es": "WS Labeler"},
+    "ws_abstention_label"  : {"en": "Abstention threshold",
+                               "fr": "Seuil d'abstention",
+                               "es": "Umbral de abstención"},
+    "ws_abstention_hint"   : {"en": "0.00 = disabled  |  0.35 = recommended  (clusters below threshold → Unknown)",
+                               "fr": "0.00 = désactivé  |  0.35 = recommandé  (clusters en dessous → Unknown)",
+                               "es": "0.00 = desactivado  |  0.35 = recomendado  (clústeres por debajo → Unknown)"},
     "progress"             : {"en": "Progress",  "fr": "Progression",  "es": "Progreso"},
 
     # ── Output tab ──────────────────────────────────────────────────────────

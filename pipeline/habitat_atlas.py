@@ -393,7 +393,7 @@ class WeightedAtlas:
             flag = "" if ms < 0.10 else "  [!] UNSTABLE"
             log(f"    H{h}: {ms:.4f}{flag}")
         if self.stability_["stable"]:
-            log("  → Atlas is stable (all shifts < 0.10)", "ok")
+            log("  → Atlas is stable (all shifts < 0.10)")
         else:
-            log("  → Some centroids are unstable — interpret with caution", "err")
+            log("  → Some centroids are unstable — interpret with caution")
         return self.stability_

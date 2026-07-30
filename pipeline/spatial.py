@@ -646,7 +646,7 @@ def _select_k_core(features, k_max, method, n_init, df_sub=None,
         k_range = range(2, k_max_safe + 1)
         print(f"    Core — Gap+Silhouette k in {list(k_range)} "
               f"(method={method.upper()})...")
-        return select_optimal_k(
+        best_k, _ = select_optimal_k(
             features,
             method=method,
             df_all=df_sub,
@@ -659,6 +659,7 @@ def _select_k_core(features, k_max, method, n_init, df_sub=None,
             kmeans_gap_guard=kmeans_gap_guard,
             output_dir=None,
         )
+        return best_k
 
 
 def _sub_segment(feats, df_sub, k, method, n_init_gmm, spatial_weight, tag):
@@ -821,7 +822,7 @@ def hierarchical_segment(features_scaled, df_all, parameters, n_init_gmm=20,
     k_range_periph = range(2, HIER_PERIPH_K_MAX + 1)
     print(f"  Periph — selecting k in {list(k_range_periph)} "
           f"({periph_feats.shape[0]} voxels, method={method.upper()})...")
-    n_periph_k = select_optimal_k(
+    n_periph_k, _ = select_optimal_k(
         periph_feats[:, periph_sel],
         method=method,
         df_all=df_periph,

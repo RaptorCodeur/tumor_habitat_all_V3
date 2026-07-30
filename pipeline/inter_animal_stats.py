@@ -235,7 +235,7 @@ def permanova(dist_matrix: np.ndarray,
         null[t] = ((ss_b_p / df_b) / (ss_w_p / df_w)
                    if ss_w_p > 1e-14 else 0.0)
 
-    p_val = float((null >= F_obs).sum() / n_perm)
+    p_val = float('nan') if np.isnan(F_obs) else float((null >= F_obs).sum() / n_perm)
 
     return {
         "F"          : float(F_obs),
@@ -298,13 +298,13 @@ def permdisp(dist_matrix: np.ndarray,
         ssw  = sum(((gd - gd.mean()) ** 2).sum()    for gd in gd_p)
         null[t] = (ssb / df_b) / (ssw / df_w) if ssw > 1e-14 else 0.0
 
-    p_val = float((null >= F_obs).sum() / n_perm)
+    p_val = float('nan') if np.isnan(F_obs) else float((null >= F_obs).sum() / n_perm)
 
     return {
         "F"             : float(F_obs),
         "p_value"       : p_val,
         "interpretation": ("Groups differ in DISPERSION — heterogeneity IS the signal"
-                           if p_val < 0.05 else
+                           if (not np.isnan(p_val) and p_val < 0.05) else
                            "No significant difference in dispersion"),
     }
 

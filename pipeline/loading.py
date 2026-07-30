@@ -22,6 +22,9 @@ def load_data(files_list):
         'MTR':    'MTR',
         'T2':     'T2',
     }
+    if not files_list:
+        raise ValueError("load_data: files_list is empty — no CSV to load")
+
     df_all = None
 
     for file_path in files_list:
