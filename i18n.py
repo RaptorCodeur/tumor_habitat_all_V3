@@ -780,7 +780,7 @@ _TR = {
         "fr": "Robuste global  (recommandé pour comparaison inter-groupes)",
         "es": "Robusto global  (recomendado para comparación inter-grupos)"},
     "norm_permouse_robust": {
-        "en": "Per-mouse robust  (removes inter-mouse differences)",
+        "en": "Per-mice robust  (removes inter-mouse differences)",
         "fr": "Robuste par souris  (supprime les différences inter-souris)",
         "es": "Robusto por ratón  (elimina diferencias inter-ratón)"},
     "norm_global_robust_hint": {

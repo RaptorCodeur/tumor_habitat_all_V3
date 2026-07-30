@@ -563,7 +563,7 @@ class HabitatApp(tk.Tk):
         # Atlas comparison tab
         self._atl_animals      = []
         self._atl_list_inner   = None
-        self._atl_k_min        = tk.IntVar(value=2)
+        self._atl_k_min        = tk.IntVar(value=3)
         self._atl_k_max        = tk.IntVar(value=7)
         self._atl_k_override   = tk.StringVar(value="")
         self._atl_n_init       = tk.IntVar(value=20)
@@ -2657,11 +2657,7 @@ class HabitatApp(tk.Tk):
         ttk.Radiobutton(inner,
                         text=t("norm_permouse_robust"),
                         variable=self._atl_normalization,
-                        value='robust').pack(anchor='w', padx=px + 4, pady=1)
-        ttk.Radiobutton(inner,
-                        text=t("norm_cl"),
-                        variable=self._atl_normalization,
-                        value='cl').pack(anchor='w', padx=px + 4, pady=(1, 6))
+                        value='robust').pack(anchor='w', padx=px + 4, pady=(1, 6))
         ttk.Label(inner,
                   text=t("norm_global_robust_hint"),
                   style="Sub.TLabel", wraplength=500).pack(anchor='w', padx=px + 4, pady=(0, 6))
