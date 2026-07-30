@@ -53,8 +53,12 @@ def _cluster_gmm(features_scaled, k, n_init_gmm=N_INIT_GMM, gmm_cache=None):
     _print_cluster_sizes(labels, k)
 
     # Post-clustering Silhouette diagnostic (GMM only)
-    final_sil = silhouette_score(features_scaled, labels)
-    print(f"\n  Final Silhouette score : {final_sil:.3f}")
+    try:
+        final_sil = silhouette_score(features_scaled, labels)
+    except ValueError:
+        final_sil = float('nan')
+    print(f"\n  Final Silhouette score : {final_sil:.3f}" if not (final_sil != final_sil) else
+          "\n  Final Silhouette score : n/a (too few samples)")
     warn_thr = GMM_SILHOUETTE_GUARD if GMM_SILHOUETTE_GUARD is not None else 0.15
     if final_sil < warn_thr:
         print(f"  [!] Low Silhouette ({final_sil:.3f} < {warn_thr}) -- clusters may not be biologically meaningful")
@@ -204,11 +208,13 @@ def run_clustering_with_size_guard(
         n_total = len(labels)
 
         # Build centroids on original MRI features (not d_topo-augmented)
-        centroids = {
-            c: {p: float(features_scaled[labels == c, i].mean())
-                for i, p in enumerate(parameters)}
-            for c in range(current_k)
-        }
+        centroids = {}
+        for c in range(current_k):
+            mask = labels == c
+            centroids[c] = {
+                p: float(features_scaled[mask, i].mean()) if mask.any() else 0.0
+                for i, p in enumerate(parameters)
+            }
         inject_dtopo_centroids(centroids, labels, dtopo_meta)
         ws = label_clusters_ws(centroids, parameters)
 

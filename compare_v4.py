@@ -1544,7 +1544,8 @@ def run_comparison_v4(results, output_dir):
     ]
     for entry in fig_paths:
         for p in (entry if isinstance(entry, list) else [entry]):
-            print(f"  {os.path.basename(p)}")
+            if p is not None:
+                print(f"  {os.path.basename(p)}")
 
     # --- PDF ---
     _write_pdf(results, all_instances, label_coh, sil,

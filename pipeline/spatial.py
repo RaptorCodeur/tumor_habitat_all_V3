@@ -47,7 +47,7 @@ def _habitat_family(name):
     """Map any habitat label (including sub-types) to its biological family."""
     families = [
         'Necrosis', 'Hypoxic/vascular', 'Cellular/proliferative',
-        'Infiltrative', 'Bulk tumor',
+        'Infiltrative', 'Astrocyte barrier', 'Bulk tumor',
     ]
     low = name.strip().lower()
     for fam in families:

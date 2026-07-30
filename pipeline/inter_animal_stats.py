@@ -31,8 +31,9 @@ def _median_bandwidth(X: np.ndarray, Y: np.ndarray,
     Xs  = X[rng.choice(len(X), min(subsample, len(X)), replace=False)]
     Ys  = Y[rng.choice(len(Y), min(subsample, len(Y)), replace=False)]
     Z   = np.vstack([Xs, Ys])
-    sq  = np.sum((Z[:, None] - Z[None, :]) ** 2, axis=-1)
-    med = float(np.median(sq[sq > 0]))
+    sq      = np.sum((Z[:, None] - Z[None, :]) ** 2, axis=-1)
+    pos_sq  = sq[sq > 0]
+    med     = float(np.median(pos_sq)) if len(pos_sq) > 0 else 1.0
     return float(np.sqrt(med / 2.0))
 
 
@@ -91,8 +92,10 @@ def mmd_pairwise_matrix(mice_features: list[np.ndarray],
             f[rng.choice(len(f), min(200, len(f)), replace=False)]
             for f in mice_features
         ])
-        sq   = np.sum((pool[:, None] - pool[None, :]) ** 2, axis=-1)
-        sigma = float(np.sqrt(np.median(sq[sq > 0]) / 2.0))
+        sq      = np.sum((pool[:, None] - pool[None, :]) ** 2, axis=-1)
+        pos_sq  = sq[sq > 0]
+        med_sq  = float(np.median(pos_sq)) if len(pos_sq) > 0 else 1.0
+        sigma   = float(np.sqrt(med_sq / 2.0))
 
     log(f"  MMD bandwidth σ = {sigma:.4f}")
 

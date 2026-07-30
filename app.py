@@ -2115,8 +2115,6 @@ class HabitatApp(tk.Tk):
                         for param in parameters}
                     for c in range(best_k)
                 }
-                features_by_cluster = {c: features_scaled[labels == c]
-                                       for c in range(best_k)}
                 three_pass = label_clusters_ws(centroids, parameters)
 
                 if use_mrf_ia and proba is not None:
@@ -2474,8 +2472,6 @@ class HabitatApp(tk.Tk):
                         for param in parameters}
                     for c in range(best_k)
                 }
-                features_by_cluster = {c: features_scaled[labels == c]
-                                       for c in range(best_k)}
                 three_pass = label_clusters_ws(centroids, parameters)
 
                 if p.get("mrf_enabled", MRF_ENABLED) and proba is not None:
@@ -3137,6 +3133,9 @@ class HabitatApp(tk.Tk):
         self._probmap_df = df
 
         # Update slice slider range
+        if 'Slice' not in df.columns:
+            self._probmap_status_lbl.config(text="CSV missing 'Slice' column")
+            return
         slices = sorted(df['Slice'].dropna().astype(int).unique())
         if slices:
             self._probmap_slice_slider.config(from_=slices[0], to=slices[-1])
@@ -3267,10 +3266,12 @@ class HabitatApp(tk.Tk):
         bg_col  = THEME["bg"]
         txt_col = THEME["text"]
 
-        # Destroy previous canvas widget
+        # Destroy previous canvas and release its figure axes to free memory
         if self._probmap_canvas is not None:
             try:
+                old_fig = self._probmap_canvas.figure
                 self._probmap_canvas.get_tk_widget().destroy()
+                old_fig.clf()
             except Exception:
                 pass
             self._probmap_canvas = None
@@ -3522,8 +3523,6 @@ class HabitatApp(tk.Tk):
                     for param in parameters}
                 for c in range(best_k)
             }
-            features_by_cluster = {c: features_scaled[labels == c]
-                                   for c in range(best_k)}
             # Zone-constrained labeling when hierarchical split was used
             zone_map = None
             if hier_meta and hier_meta.get('hierarchical_valid'):

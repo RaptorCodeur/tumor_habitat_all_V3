@@ -84,7 +84,7 @@ def cl_hybrid_normalize(df_tumor, parameters, cl_stats):
         s         = cl_stats.get(p, {'median': 0.0, 'iqr': 1.0})
         cl_median = s['median']
         col       = df_tumor[p].dropna()
-        q75, q25  = float(col.quantile(0.75)), float(col.quantile(0.25))
+        q25, q75  = float(col.quantile(0.25)), float(col.quantile(0.75))
         tumor_iqr = max(q75 - q25, 1e-8)
         df_scaled[p] = (df_tumor[p] - cl_median) / tumor_iqr
         print(f"{p:<12} {cl_median:>12.4f} {tumor_iqr:>12.4f} {s.get('n', 0):>6}")
@@ -186,6 +186,9 @@ def load_joint_dataset(mice_list, normalization='cl', log_fn=print):
         df_scaled['mouse_name'] = name
         all_dfs.append(df_scaled)
         all_params.append(parameters)
+
+    if not all_params:
+        raise ValueError("load_joint_dataset: mice_list is empty — no mouse to load")
 
     # Intersect parameter sets, preserving order from first mouse
     common_set      = set(all_params[0])
