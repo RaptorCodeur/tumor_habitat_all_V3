@@ -161,3 +161,71 @@ def load_cl_stats(files_list, parameters):
         print(f"{param:<12} {mean:>10.4f} {std:>10.4f} {median:>10.4f} {len(vals):>6}")
 
     return cl_stats
+
+
+def compute_brain_percentiles(files_list, parameters, percentile=10):
+    """
+    Compute a low percentile of ALL voxels per parameter (no ROI filter).
+    Covers tumor + surrounding ROIs (CL, IN, TC, TP), giving a stable
+    signal floor that is less dependent on the tumor itself.
+    """
+    param_map = {
+        'DTI-AD': 'DTI-AD', 'DTI-FA': 'DTI-FA', 'DTI-MD': 'DTI-MD',
+        'DTI-RD': 'DTI-RD', 'T2star': 'T2star', 'MTR': 'MTR', 'T2': 'T2',
+    }
+    all_vals = {p: [] for p in parameters}
+
+    for file_path in files_list:
+        raw_name = os.path.splitext(os.path.basename(file_path))[0]
+        col_name = next((p for p in param_map if p in raw_name), None)
+        if col_name not in parameters:
+            continue
+        df   = pd.read_csv(file_path)
+        vals = df['Value'].dropna().tolist()
+        all_vals[col_name].extend(vals)
+
+    brain_p = {}
+    for p in parameters:
+        arr = np.array(all_vals[p])
+        if len(arr) > 0:
+            brain_p[p] = float(np.percentile(arr, percentile))
+
+    return brain_p
+
+
+def hybrid_scale(df_all, files_list, parameters, percentile=10):
+    """
+    Hybrid normalization:  x_norm = (x − P{percentile}_all_rois) / IQR_tumor
+
+    Offset: low percentile of ALL voxels in each CSV (including non-tumor ROIs)
+            — anchors to a stable 'floor' of the measurement space.
+    Scale:  intra-tumor IQR — preserves relative within-tumor variability.
+    """
+    brain_p = compute_brain_percentiles(files_list, parameters, percentile)
+    df_scaled    = df_all.copy()
+    scaling_info = {}
+
+    print(f"\n-- Hybrid scaling (P{percentile} all-ROI offset + tumor IQR) --")
+    print(f"{'Parameter':<12} {'P'+str(percentile)+'_all':>12} {'Tumor IQR':>12}")
+    print("-" * 38)
+
+    for p in parameters:
+        col   = df_all[p].dropna()
+        q25   = float(col.quantile(0.25))
+        q75   = float(col.quantile(0.75))
+        iqr_p = q75 - q25
+        p_off = brain_p.get(p, float(col.median()))
+
+        scaling_info[p] = {"median": p_off, "iqr": iqr_p, "mode": "hybrid"}
+
+        if iqr_p == 0:
+            print(f"  [!] {p} : IQR = 0 -> column set to 0")
+            df_scaled[p] = 0.0
+        else:
+            df_scaled[p] = (df_all[p] - p_off) / iqr_p
+
+        print(f"{p:<12} {p_off:>12.4f} {iqr_p:>12.4f}")
+
+    features_scaled = df_scaled[parameters].values
+    features_scaled = np.nan_to_num(features_scaled, nan=0.0)
+    return df_scaled, features_scaled, scaling_info

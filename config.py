@@ -37,6 +37,9 @@ UNDETERMINED_THRESHOLD = 0.3  # Max |robust-scaled value| to flag as Bulk tumor
 # 0.0 = disabled (every cluster gets a label).  Suggested value: 0.35.
 WS_ABSTENTION_THR = 0.0
 
+# Percentile used for hybrid normalization offset (P10 of all-ROI voxels).
+BRAIN_PERCENTILE = 10
+
 # --- Napari ---
 NAPARI_OPACITY = 0.8
 

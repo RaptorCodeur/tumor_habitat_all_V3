@@ -38,7 +38,7 @@ from pipeline.spatial import (
     mrf_boundary_smooth, hierarchical_segment,
     inject_dtopo_centroids, compute_zone_dtopo, compute_necrotic_dtopo,
 )
-from pipeline.loading    import load_data, robust_scale, load_cl_stats, resolve_dti_parameters
+from pipeline.loading    import load_data, robust_scale, hybrid_scale, load_cl_stats, resolve_dti_parameters
 from pipeline.selection  import select_optimal_k
 from pipeline.clustering import run_clustering, run_clustering_with_size_guard
 from pipeline.labeling   import show_habitat_map, _label_dialog
@@ -467,6 +467,7 @@ class HabitatApp(tk.Tk):
         self.mrf_enabled        = tk.BooleanVar(value=MRF_ENABLED)
         self.hierarchical_enabled = tk.BooleanVar(value=HIERARCHICAL_ENABLED)
         self.ws_abstention_thr  = tk.DoubleVar(value=WS_ABSTENTION_THR)
+        self.norm_mode          = tk.StringVar(value='robust')
 
         self.queue          = queue.Queue()
         self._napari_params = None
@@ -1076,6 +1077,20 @@ class HabitatApp(tk.Tk):
                         text=t("mrf_opt") + f"  (λ={MRF_LAMBDA}, thr={MRF_CONFIDENCE_THR})",
                         variable=self.mrf_enabled,
                         ).pack(anchor='w', padx=px + 4, pady=2)
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=8)
+
+        # ── Section : Normalization ────────────────────────────────────
+        ttk.Label(inner, text=t("norm_section"),
+                  style="Sub.TLabel").pack(anchor='w', padx=px, pady=(0, 4))
+        for _val, _key in [('robust', 'norm_robust_radio'),
+                            ('hybrid', 'norm_hybrid_radio')]:
+            ttk.Radiobutton(inner, text=t(_key),
+                            variable=self.norm_mode, value=_val,
+                            ).pack(anchor='w', padx=px + 4, pady=1)
+        ttk.Label(inner, text=t("norm_hybrid_hint"),
+                  style="Sub.TLabel", wraplength=460,
+                  ).pack(anchor='w', padx=px + 22, pady=(0, 4))
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=8)
 
@@ -2036,7 +2051,11 @@ class HabitatApp(tk.Tk):
 
                 parameters, df_all = load_data(animal["files"])
                 parameters, dti_mode = resolve_dti_parameters(parameters)
-                df_scaled, features_scaled, scaling_info = robust_scale(df_all, parameters)
+                if p.get("norm_mode") == "hybrid":
+                    df_scaled, features_scaled, scaling_info = hybrid_scale(
+                        df_all, animal["files"], parameters)
+                else:
+                    df_scaled, features_scaled, scaling_info = robust_scale(df_all, parameters)
                 plot_correlation(df_scaled, parameters, out_dir)
 
                 use_hier_ia    = p.get("hierarchical_enabled", HIERARCHICAL_ENABLED)
@@ -2429,7 +2448,11 @@ class HabitatApp(tk.Tk):
                 os.makedirs(out_dir, exist_ok=True)
                 log(t("log_method_start", name=name))
 
-                df_scaled, features_scaled, scaling_info = robust_scale(df_all, parameters)
+                if p.get("norm_mode") == "hybrid":
+                    df_scaled, features_scaled, scaling_info = hybrid_scale(
+                        df_all, p["csv_files"], parameters)
+                else:
+                    df_scaled, features_scaled, scaling_info = robust_scale(df_all, parameters)
                 plot_correlation(df_scaled, parameters, out_dir)
 
                 features_clust, dtopo_meta_im = prepare_features(
@@ -3391,6 +3414,7 @@ class HabitatApp(tk.Tk):
             "mrf_enabled"        : self.mrf_enabled.get(),
             "hierarchical_enabled": self.hierarchical_enabled.get(),
             "ws_abstention_thr"  : self.ws_abstention_thr.get(),
+            "norm_mode"          : self.norm_mode.get(),
         }
 
         thread = threading.Thread(target=self._run_pipeline,
@@ -3425,7 +3449,11 @@ class HabitatApp(tk.Tk):
             parameters, df_all = load_data(p["csv_files"])
             parameters, dti_mode = resolve_dti_parameters(parameters)
             log(t("log_dti_mode", mode=dti_mode, params=parameters))
-            df_scaled, features_scaled, scaling_info = robust_scale(df_all, parameters)
+            if p.get("norm_mode") == "hybrid":
+                df_scaled, features_scaled, scaling_info = hybrid_scale(
+                    df_all, p["csv_files"], parameters)
+            else:
+                df_scaled, features_scaled, scaling_info = robust_scale(df_all, parameters)
             plot_correlation(df_scaled, parameters, out_dir)
 
             # ── Step 6 (option): Hierarchical k=2 segmentation ───────
@@ -3965,7 +3993,11 @@ class HabitatApp(tk.Tk):
 
                 parameters, df_all = load_data(animal["files"])
                 parameters, dti_mode = resolve_dti_parameters(parameters)
-                df_scaled, features_scaled, scaling_info = robust_scale(df_all, parameters)
+                if p.get("norm_mode") == "hybrid":
+                    df_scaled, features_scaled, scaling_info = hybrid_scale(
+                        df_all, animal["files"], parameters)
+                else:
+                    df_scaled, features_scaled, scaling_info = robust_scale(df_all, parameters)
 
                 features_clust, dtopo_meta = prepare_features(
                     features_scaled, df_all, parameters, n_init_gmm=n_init)

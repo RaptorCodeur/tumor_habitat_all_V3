@@ -111,6 +111,18 @@ _TR = {
     "ws_abstention_hint"   : {"en": "0.00 = disabled  |  0.35 = recommended  (clusters below threshold → Unknown)",
                                "fr": "0.00 = désactivé  |  0.35 = recommandé  (clusters en dessous → Unknown)",
                                "es": "0.00 = desactivado  |  0.35 = recomendado  (clústeres por debajo → Unknown)"},
+    "norm_section"         : {"en": "Normalization",
+                               "fr": "Normalisation",
+                               "es": "Normalización"},
+    "norm_robust_radio"    : {"en": "Robust intra-tumor  (x − median_tumor) / IQR_tumor",
+                               "fr": "Robuste intra-tumeur  (x − médiane_tumeur) / IQR_tumeur",
+                               "es": "Robusto intra-tumor  (x − mediana_tumor) / IQR_tumor"},
+    "norm_hybrid_radio"    : {"en": "Hybrid: P10 all-ROI + tumor IQR  (x − P10_all) / IQR_tumor",
+                               "fr": "Hybride : P10 tous-ROIs + IQR tumoral  (x − P10_all) / IQR_tumeur",
+                               "es": "Híbrido: P10 todos-ROIs + IQR tumoral  (x − P10_all) / IQR_tumor"},
+    "norm_hybrid_hint"     : {"en": "Offset anchored to the bottom 10 % of all measured voxels (including non-tumor ROIs). More stable across heterogeneous tumors.",
+                               "fr": "Offset ancré au 10e percentile de tous les voxels mesurés (incluant les ROIs non-tumorales). Plus stable entre tumeurs hétérogènes.",
+                               "es": "Offset anclado al percentil 10 de todos los vóxeles medidos (incluyendo ROIs no tumorales). Más estable entre tumores heterogéneos."},
     "progress"             : {"en": "Progress",  "fr": "Progression",  "es": "Progreso"},
 
     # ── Output tab ──────────────────────────────────────────────────────────
