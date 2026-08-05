@@ -1,0 +1,34 @@
+{
+  "name": "SynM06_2H",
+  "parameters": [
+    "DTI-AD",
+    "DTI-FA",
+    "DTI-MD",
+    "DTI-RD",
+    "T2star",
+    "MTR",
+    "T2"
+  ],
+  "tumor_radius": 22,
+  "n_slices": 4,
+  "noise_scale": 0.08,
+  "cl_radius": 9.0,
+  "seeds": [
+    {
+      "habitat_type": "necrotic",
+      "x": -0.42,
+      "y": 0.0,
+      "sigma": 0.38,
+      "weight": 1.0
+    },
+    {
+      "habitat_type": "proliferative",
+      "x": 0.42,
+      "y": 0.0,
+      "sigma": 0.38,
+      "weight": 1.0
+    }
+  ],
+  "n_tumor_voxels": 2942,
+  "n_cl_voxels": 1016
+}

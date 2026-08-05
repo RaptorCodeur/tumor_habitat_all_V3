@@ -1,0 +1,55 @@
+{
+  "name": "SynM10_edema",
+  "parameters": [
+    "DTI-AD",
+    "DTI-FA",
+    "DTI-MD",
+    "DTI-RD",
+    "T2star",
+    "MTR",
+    "T2"
+  ],
+  "tumor_radius": 22,
+  "n_slices": 4,
+  "noise_scale": 0.07,
+  "cl_radius": 9.0,
+  "seeds": [
+    {
+      "habitat_type": "edematous",
+      "x": 0.0,
+      "y": 0.0,
+      "sigma": 0.5,
+      "weight": 2.0
+    },
+    {
+      "habitat_type": "proliferative",
+      "x": 0.78,
+      "y": 0.0,
+      "sigma": 0.28,
+      "weight": 1.0
+    },
+    {
+      "habitat_type": "proliferative",
+      "x": -0.78,
+      "y": 0.0,
+      "sigma": 0.28,
+      "weight": 1.0
+    },
+    {
+      "habitat_type": "proliferative",
+      "x": 0.0,
+      "y": 0.78,
+      "sigma": 0.28,
+      "weight": 1.0
+    },
+    {
+      "habitat_type": "proliferative",
+      "x": 0.0,
+      "y": -0.78,
+      "sigma": 0.28,
+      "weight": 1.0
+    }
+  ],
+  "n_tumor_voxels": 2910,
+  "n_cl_voxels": 1020
+}

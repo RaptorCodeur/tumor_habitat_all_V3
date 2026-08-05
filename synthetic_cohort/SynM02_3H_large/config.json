@@ -1,0 +1,83 @@
+{
+  "name": "SynM02_3H_large",
+  "parameters": [
+    "DTI-AD",
+    "DTI-FA",
+    "DTI-MD",
+    "DTI-RD",
+    "T2star",
+    "MTR",
+    "T2"
+  ],
+  "tumor_radius": 32,
+  "n_slices": 6,
+  "noise_scale": 0.08,
+  "cl_radius": 9.0,
+  "seeds": [
+    {
+      "habitat_type": "necrotic",
+      "x": 0.0,
+      "y": 0.0,
+      "sigma": 0.28,
+      "weight": 4.0
+    },
+    {
+      "habitat_type": "hypoxic",
+      "x": 0.5,
+      "y": 0.0,
+      "sigma": 0.32,
+      "weight": 1.0
+    },
+    {
+      "habitat_type": "hypoxic",
+      "x": -0.5,
+      "y": 0.0,
+      "sigma": 0.32,
+      "weight": 1.0
+    },
+    {
+      "habitat_type": "hypoxic",
+      "x": 0.0,
+      "y": 0.5,
+      "sigma": 0.32,
+      "weight": 1.0
+    },
+    {
+      "habitat_type": "hypoxic",
+      "x": 0.0,
+      "y": -0.5,
+      "sigma": 0.32,
+      "weight": 1.0
+    },
+    {
+      "habitat_type": "proliferative",
+      "x": 0.84,
+      "y": 0.0,
+      "sigma": 0.2,
+      "weight": 1.0
+    },
+    {
+      "habitat_type": "proliferative",
+      "x": -0.84,
+      "y": 0.0,
+      "sigma": 0.2,
+      "weight": 1.0
+    },
+    {
+      "habitat_type": "proliferative",
+      "x": 0.0,
+      "y": 0.84,
+      "sigma": 0.2,
+      "weight": 1.0
+    },
+    {
+      "habitat_type": "proliferative",
+      "x": 0.0,
+      "y": -0.84,
+      "sigma": 0.2,
+      "weight": 1.0
+    }
+  ],
+  "n_tumor_voxels": 10278,
+  "n_cl_voxels": 1524
+}

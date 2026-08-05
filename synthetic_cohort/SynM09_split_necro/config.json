@@ -1,0 +1,48 @@
+{
+  "name": "SynM09_split_necro",
+  "parameters": [
+    "DTI-AD",
+    "DTI-FA",
+    "DTI-MD",
+    "DTI-RD",
+    "T2star",
+    "MTR",
+    "T2"
+  ],
+  "tumor_radius": 30,
+  "n_slices": 5,
+  "noise_scale": 0.08,
+  "cl_radius": 9.0,
+  "seeds": [
+    {
+      "habitat_type": "necrotic",
+      "x": -0.52,
+      "y": 0.0,
+      "sigma": 0.22,
+      "weight": 1.0
+    },
+    {
+      "habitat_type": "necrotic",
+      "x": 0.52,
+      "y": 0.0,
+      "sigma": 0.22,
+      "weight": 1.0
+    },
+    {
+      "habitat_type": "proliferative",
+      "x": 0.0,
+      "y": 0.0,
+      "sigma": 0.28,
+      "weight": 1.0
+    },
+    {
+      "habitat_type": "edematous",
+      "x": 0.0,
+      "y": 0.72,
+      "sigma": 0.24,
+      "weight": 1.0
+    }
+  ],
+  "n_tumor_voxels": 7120,
+  "n_cl_voxels": 1280
+}
