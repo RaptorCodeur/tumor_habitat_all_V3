@@ -15,9 +15,10 @@ from dispersion difference — in oncology the latter is often the signal.
 """
 
 import numpy as np
-from scipy.special import gammaln
+from scipy.special  import gammaln
 from scipy.optimize import minimize
 from scipy.stats    import chi2
+from joblib         import Parallel, delayed
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -73,6 +74,14 @@ def gaussian_mmd_sq(X: np.ndarray, Y: np.ndarray,
     return float(mmd2), sigma
 
 
+def _mmd_pair(i: int, j: int,
+              fi: np.ndarray, fj: np.ndarray,
+              sigma: float, max_voxels: int) -> tuple[int, int, float]:
+    """Worker for parallel pairwise MMD computation."""
+    mmd2, _ = gaussian_mmd_sq(fi, fj, sigma, max_voxels)
+    return i, j, max(float(mmd2), 0.0)
+
+
 def mmd_pairwise_matrix(mice_features: list[np.ndarray],
                          sigma: float | None = None,
                          max_voxels: int = 2000,
@@ -81,6 +90,7 @@ def mmd_pairwise_matrix(mice_features: list[np.ndarray],
     Compute symmetric pairwise MMD² matrix D[i,j] = MMD²(P_i, P_j).
     Distance matrix = sqrt(max(D, 0)).
 
+    Pairs are computed in parallel (joblib threads — NumPy releases the GIL).
     Returns (D_sq, sigma).
     """
     n = len(mice_features)
@@ -99,14 +109,19 @@ def mmd_pairwise_matrix(mice_features: list[np.ndarray],
 
     log(f"  MMD bandwidth σ = {sigma:.4f}")
 
-    D = np.zeros((n, n))
-    for i in range(n):
-        for j in range(i + 1, n):
-            mmd2, _ = gaussian_mmd_sq(mice_features[i], mice_features[j],
-                                       sigma, max_voxels)
-            D[i, j] = D[j, i] = max(mmd2, 0.0)
-        log(f"  MMD row {i + 1}/{n} done")
+    pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
+    log(f"  Computing {len(pairs)} MMD pairs in parallel …")
 
+    results = Parallel(n_jobs=-1, prefer="threads")(
+        delayed(_mmd_pair)(i, j, mice_features[i], mice_features[j], sigma, max_voxels)
+        for i, j in pairs
+    )
+
+    D = np.zeros((n, n))
+    for i, j, val in results:
+        D[i, j] = D[j, i] = val
+
+    log(f"  MMD matrix done ({n}×{n})")
     return D, sigma
 
 
@@ -229,14 +244,23 @@ def permanova(dist_matrix: np.ndarray,
     F_obs  = (ss_b / df_b) / (ss_w / df_w) if (df_w > 0 and ss_w > 1e-14) else np.nan
     R2     = ss_b / ss_tot if ss_tot > 1e-14 else np.nan
 
+    # Pre-compute group membership once — unique_g and group sizes are invariant
+    # under permutation (only labels are shuffled, counts stay constant).
+    unique_g  = np.unique(groups)
+    n_g_sizes = np.array([(groups == g).sum() for g in unique_g])
+
     rng  = np.random.default_rng(seed)
     null = np.zeros(n_perm)
     for t in range(n_perm):
-        pg      = rng.permutation(groups)
-        ss_w_p  = _ss_within(D2, pg)
+        pg     = rng.permutation(groups)
+        ss_w_p = 0.0
+        for g, ng in zip(unique_g, n_g_sizes):
+            if ng < 2:
+                continue
+            idx     = np.where(pg == g)[0]
+            ss_w_p += D2[np.ix_(idx, idx)].sum() / (2 * ng)
         ss_b_p  = ss_tot - ss_w_p
-        null[t] = ((ss_b_p / df_b) / (ss_w_p / df_w)
-                   if ss_w_p > 1e-14 else 0.0)
+        null[t] = (ss_b_p / df_b) / (ss_w_p / df_w) if ss_w_p > 1e-14 else 0.0
 
     p_val = float('nan') if np.isnan(F_obs) else float((null >= F_obs).sum() / n_perm)
 
@@ -273,22 +297,24 @@ def permdisp(dist_matrix: np.ndarray,
     coords = mds.fit_transform(dist_matrix)   # (n, ndim)
     groups = np.asarray(group_labels)
 
-    def _dist_to_centroid(coords, groups):
+    # Pre-compute unique groups once — invariant under permutation
+    unique_g = np.unique(groups)
+
+    def _dist_to_centroid(coords, grp):
         d = np.zeros(len(coords))
-        for g in np.unique(groups):
-            idx       = groups == g
-            centroid  = coords[idx].mean(axis=0)
-            d[idx]    = np.sqrt(((coords[idx] - centroid) ** 2).sum(axis=1))
+        for g in unique_g:
+            idx      = grp == g
+            centroid = coords[idx].mean(axis=0)
+            d[idx]   = np.sqrt(((coords[idx] - centroid) ** 2).sum(axis=1))
         return d
 
-    obs_d     = _dist_to_centroid(coords, groups)
-    unique_g  = np.unique(groups)
-    gd_obs    = [obs_d[groups == g] for g in unique_g]
-    grand_m   = obs_d.mean()
-    ss_b_obs  = sum(len(gd) * (gd.mean() - grand_m) ** 2 for gd in gd_obs)
-    ss_w_obs  = sum(((gd - gd.mean()) ** 2).sum()       for gd in gd_obs)
+    obs_d    = _dist_to_centroid(coords, groups)
+    gd_obs   = [obs_d[groups == g] for g in unique_g]
+    grand_m  = obs_d.mean()
+    ss_b_obs = sum(len(gd) * (gd.mean() - grand_m) ** 2 for gd in gd_obs)
+    ss_w_obs = sum(((gd - gd.mean()) ** 2).sum()        for gd in gd_obs)
     df_b, df_w = len(unique_g) - 1, n - len(unique_g)
-    F_obs     = (ss_b_obs / df_b) / (ss_w_obs / df_w) if ss_w_obs > 1e-14 else np.nan
+    F_obs    = (ss_b_obs / df_b) / (ss_w_obs / df_w) if ss_w_obs > 1e-14 else np.nan
 
     rng  = np.random.default_rng(seed)
     null = np.zeros(n_perm)
@@ -331,15 +357,11 @@ def clr_transform(pi_matrix: np.ndarray, eps: float = 1e-6) -> np.ndarray:
 def aitchison_dist_matrix(pi_matrix: np.ndarray, eps: float = 1e-6) -> np.ndarray:
     """
     Pairwise Aitchison distances: D[i,j] = ‖CLR(π_i) − CLR(π_j)‖₂.
+    Fully vectorised via broadcasting — no Python loop over mice.
     """
-    clr = clr_transform(pi_matrix, eps)
-    n   = len(clr)
-    D   = np.zeros((n, n))
-    for i in range(n):
-        diffs      = clr[i] - clr[i + 1:]
-        D[i, i + 1:] = np.sqrt((diffs ** 2).sum(axis=1))
-    D += D.T
-    return D
+    clr  = clr_transform(pi_matrix, eps)   # (n, k)
+    diff = clr[:, None, :] - clr[None, :, :]  # (n, n, k)
+    return np.sqrt((diff ** 2).sum(axis=2))    # (n, n)
 
 
 # ── Dirichlet regression ─────────────────────────────────────────────────────

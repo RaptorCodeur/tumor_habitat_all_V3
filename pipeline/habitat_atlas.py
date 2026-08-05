@@ -22,7 +22,8 @@ from scipy.spatial.distance import cdist
 
 from config import RANDOM_SEED, GMM_SILHOUETTE_GUARD
 
-VOXELS_PER_MOUSE = 500   # voxels contributed per mouse to the GMM fit
+VOXELS_PER_MOUSE  = 500    # voxels contributed per mouse to the GMM fit
+_SIL_SUBSAMPLE    = 5_000  # max voxels used to estimate silhouette (O(n²) cost)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -175,8 +176,15 @@ def select_atlas_k(features: np.ndarray, mouse_ids: np.ndarray,
         bic  = gmm.bic(feat64)
         icl  = _icl(gmm, feat64)
         labs = gmm.predict(feat64)
-        sil  = (silhouette_score(features, labs)
-                if len(np.unique(labs)) > 1 else 0.0)
+        if len(np.unique(labs)) > 1:
+            if len(features) > _SIL_SUBSAMPLE:
+                rng_sil = np.random.default_rng(seed + k)
+                idx_sil = rng_sil.choice(len(features), _SIL_SUBSAMPLE, replace=False)
+                sil = float(silhouette_score(features[idx_sil], labs[idx_sil]))
+            else:
+                sil = float(silhouette_score(features, labs))
+        else:
+            sil = 0.0
 
         valid_ks.append(k)
         bic_dict[k] = bic
