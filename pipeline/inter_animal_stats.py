@@ -82,6 +82,8 @@ def _mmd_pair(i: int, j: int,
     return i, j, max(float(mmd2), 0.0)
 
 
+_MMD_PARALLEL_THRESHOLD = 30  # use parallel only above this number of mice
+
 def mmd_pairwise_matrix(mice_features: list[np.ndarray],
                          sigma: float | None = None,
                          max_voxels: int = 2000,
@@ -90,7 +92,8 @@ def mmd_pairwise_matrix(mice_features: list[np.ndarray],
     Compute symmetric pairwise MMD² matrix D[i,j] = MMD²(P_i, P_j).
     Distance matrix = sqrt(max(D, 0)).
 
-    Pairs are computed in parallel (joblib threads — NumPy releases the GIL).
+    Uses joblib parallel threads when n > _MMD_PARALLEL_THRESHOLD (default 30)
+    to amortise the thread-pool overhead on small cohorts.
     Returns (D_sq, sigma).
     """
     n = len(mice_features)
@@ -107,21 +110,29 @@ def mmd_pairwise_matrix(mice_features: list[np.ndarray],
         med_sq  = float(np.median(pos_sq)) if len(pos_sq) > 0 else 1.0
         sigma   = float(np.sqrt(med_sq / 2.0))
 
-    log(f"  MMD bandwidth σ = {sigma:.4f}")
+    log(f"  MMD bandwidth sigma = {sigma:.4f}")
 
     pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
-    log(f"  Computing {len(pairs)} MMD pairs in parallel …")
+    D     = np.zeros((n, n))
 
-    results = Parallel(n_jobs=-1, prefer="threads")(
-        delayed(_mmd_pair)(i, j, mice_features[i], mice_features[j], sigma, max_voxels)
-        for i, j in pairs
-    )
+    if n > _MMD_PARALLEL_THRESHOLD:
+        log(f"  Computing {len(pairs)} MMD pairs in parallel (n={n} > {_MMD_PARALLEL_THRESHOLD}) ...")
+        results = Parallel(n_jobs=-1, prefer="threads")(
+            delayed(_mmd_pair)(i, j, mice_features[i], mice_features[j], sigma, max_voxels)
+            for i, j in pairs
+        )
+        for i, j, val in results:
+            D[i, j] = D[j, i] = val
+    else:
+        log(f"  Computing {len(pairs)} MMD pairs sequentially (n={n} <= {_MMD_PARALLEL_THRESHOLD}) ...")
+        for i in range(n):
+            for j in range(i + 1, n):
+                mmd2, _ = gaussian_mmd_sq(mice_features[i], mice_features[j],
+                                          sigma, max_voxels)
+                D[i, j] = D[j, i] = max(float(mmd2), 0.0)
+            log(f"  MMD row {i + 1}/{n} done")
 
-    D = np.zeros((n, n))
-    for i, j, val in results:
-        D[i, j] = D[j, i] = val
-
-    log(f"  MMD matrix done ({n}×{n})")
+    log(f"  MMD matrix done ({n}x{n})")
     return D, sigma
 
 
