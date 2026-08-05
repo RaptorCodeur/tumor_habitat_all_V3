@@ -26,8 +26,8 @@ from multi_mouse_discovery import (
 from config import (
     HABITAT_COLORS,
     GMM_SILHOUETTE_GUARD,
-    DTOPO_JOINT_WEIGHT, DTOPO_MIN_NECROSIS_FRACTION,
-    N_JOBS_GAP, RANDOM_SEED,
+    DTOPO_MIN_NECROSIS_FRACTION,
+    N_JOBS_GAP, RANDOM_SEED, SPATIAL_WEIGHT,
 )
 
 # ── colour helpers ──────────────────────────────────────────────────────────
@@ -41,6 +41,151 @@ _METHOD_COLORS = {
 def _hcol(hab_id, alpha=1.0):
     r, g, b, _ = HABITAT_COLORS[int(hab_id) % len(HABITAT_COLORS)]
     return (r / 255, g / 255, b / 255, alpha)
+
+
+# ── Semantic habitat colours (Compare PDF only) ──────────────────────────────
+
+_SIG_BULK = (0.13, 0.59, 0.95, 1.0)   # blue  — bulk (most voxels)
+_SIG_NECT = (0.90, 0.23, 0.23, 1.0)   # red   — necrotic (highest MD/AD/RD)
+_SIG_GRAY = (0.55, 0.55, 0.55, 1.0)   # fallback
+
+# Must not contain blue or red
+_DEFAULT_POOL = [
+    (1.00, 0.60, 0.00),  # orange
+    (0.30, 0.69, 0.31),  # green
+    (0.00, 0.74, 0.83),  # teal
+    (1.00, 0.76, 0.03),  # amber
+    (0.55, 0.27, 0.07),  # brown
+    (0.96, 0.50, 0.19),  # deep orange
+    (0.61, 0.80, 0.40),  # lime
+    (0.62, 0.27, 0.62),  # violet (reserved for future astrocyte type)
+]
+
+
+def _hcol_mapped(hab_id, color_map, alpha=1.0):
+    """Use color_map if available, else fall back to HABITAT_COLORS."""
+    if color_map:
+        c = color_map.get(int(hab_id))
+        if c is not None:
+            return (c[0], c[1], c[2], alpha)
+    return _hcol(int(hab_id), alpha)
+
+
+def _diff_indices(params):
+    """Indices of diffusion parameters (MD / AD / RD, DTI-prefixed or bare)."""
+    out = []
+    for i, p in enumerate(params):
+        pu = p.upper().replace("_", "-")
+        if (pu.startswith("DTI-") and pu.endswith(("MD", "AD", "RD"))) \
+                or pu in ("MD", "ADC"):
+            out.append(i)
+    return out
+
+
+def _signature_assignment(centroids, labels, params):
+    """
+    Blue  → habitat with most voxels (bulk tumour).
+    Red   → habitat with highest diffusion norm (necrosis), if DTI features present.
+    Returns (color_map, assigned_set).
+    """
+    k      = centroids.shape[0]
+    counts = np.array([np.sum(labels == i) for i in range(k)])
+    cmap   = {}
+    done   = set()
+
+    bulk = int(np.argmax(counts))
+    cmap[bulk] = _SIG_BULK
+    done.add(bulk)
+
+    if k > 1:
+        diff_idx = _diff_indices(params)
+        if diff_idx:
+            norms = np.linalg.norm(centroids[:, diff_idx], axis=1).copy()
+            for a in done:
+                norms[a] = -np.inf
+            nec = int(np.argmax(norms))
+            if nec not in done:
+                cmap[nec] = _SIG_NECT
+                done.add(nec)
+
+    return cmap, done
+
+
+def _build_cross_color_maps(disc_cents, disc_labels, disc_params,
+                             jt_cents,   jt_labels,   jt_params,
+                             threshold=0.65):
+    """
+    Consistent color maps for Discovery and Joint.
+    Signature colours (bulk=blue, necrotic=red) are assigned independently.
+    Non-signature habitats are matched across methods by cosine similarity.
+    Returns (disc_color_map, jt_color_map).
+    """
+    k_d = len(disc_cents) if disc_cents is not None else 0
+    k_j = len(jt_cents)   if jt_cents  is not None else 0
+
+    pool_iter = iter(_DEFAULT_POOL)
+
+    d_map, d_sig, free_d = {}, set(), []
+    if k_d > 0:
+        d_map, d_sig = _signature_assignment(disc_cents, disc_labels, disc_params)
+        free_d = [i for i in range(k_d) if i not in d_sig]
+
+    j_map, j_sig, free_j = {}, set(), []
+    if k_j > 0:
+        j_map, j_sig = _signature_assignment(jt_cents, jt_labels, jt_params)
+        free_j = [i for i in range(k_j) if i not in j_sig]
+
+    # Cosine matching of non-signature habitats
+    matches = {}
+    if free_d and free_j and disc_cents is not None and jt_cents is not None:
+        common = [p for p in disc_params if p in jt_params]
+        if common:
+            di = [disc_params.index(p) for p in common]
+            ji = [jt_params.index(p)   for p in common]
+            CD   = disc_cents[np.array(free_d)][:, di]
+            CJ   = jt_cents  [np.array(free_j)][:, ji]
+            CD_n = CD / (np.linalg.norm(CD, axis=1, keepdims=True) + 1e-10)
+            CJ_n = CJ / (np.linalg.norm(CJ, axis=1, keepdims=True) + 1e-10)
+            sim  = CD_n @ CJ_n.T
+            used_j = set()
+            for ai, d_h in enumerate(free_d):
+                best_score, best_bi = threshold, None
+                for bi, j_h in enumerate(free_j):
+                    if bi not in used_j and sim[ai, bi] > best_score:
+                        best_score, best_bi = sim[ai, bi], bi
+                if best_bi is not None:
+                    matches[d_h] = free_j[best_bi]
+                    used_j.add(best_bi)
+
+    # Discovery free habitats → sequential default colours
+    for d_h in free_d:
+        col = next(pool_iter, _SIG_GRAY[:3])
+        d_map[d_h] = (*col, 1.0)
+
+    # Matched Joint habitats inherit Discovery colour
+    matched_j = set(matches.values())
+    for d_h, j_h in matches.items():
+        j_map[j_h] = d_map[d_h]
+
+    # Unmatched Joint habitats continue from the same pool
+    for j_h in free_j:
+        if j_h not in matched_j:
+            col = next(pool_iter, _SIG_GRAY[:3])
+            j_map[j_h] = (*col, 1.0)
+
+    return d_map, j_map
+
+
+def _single_color_map(centroids, labels, params):
+    """Signature + default palette for one method (no cross-method matching)."""
+    k      = centroids.shape[0]
+    c_map, done = _signature_assignment(centroids, labels, params)
+    pool_iter   = iter(_DEFAULT_POOL)
+    for i in range(k):
+        if i not in c_map:
+            col = next(pool_iter, _SIG_GRAY[:3])
+            c_map[i] = (*col, 1.0)
+    return c_map
 
 
 # ── Classic per-mouse ───────────────────────────────────────────────────────
@@ -83,7 +228,7 @@ def run_classic_for_mouse(csv_files, method, k_range, k_override,
         labels, _, best_k = run_clustering_with_size_guard(
             features_clust, feat_sc, df_scaled, chosen_k,
             method        = method,
-            spatial_weight= 0.0,
+            spatial_weight= SPATIAL_WEIGHT,
             n_init_gmm    = n_init,
             parameters    = parameters,
             gmm_cache     = gmm_cache,
@@ -191,16 +336,16 @@ def run_discovery_meta(classic_results, method, k_range, k_override, n_init, log
             chosen_k = min(int(k_ov_str), len(X) - 1)
             log(f"  [Discovery] K forced = {chosen_k}")
         else:
-            safe_kmax  = min(max(k_range), len(X) - 1)
-            safe_kmin  = min(min(k_range), safe_kmax)
-            safe_range = range(safe_kmin, safe_kmax + 1)
-            if len(safe_range) < 1 or safe_kmax < 2:
+            # Always search 2–10 for meta-K (mirrors standalone Discovery tab),
+            # regardless of the Classic k_range set by the user.
+            safe_kmax  = min(10, len(X) - 1)
+            if safe_kmax < 2:
                 log(f"  [Discovery] Not enough clusters for K search "
-                    f"(pool={len(X)}, kmin={safe_kmin}) — forcing K=2")
+                    f"(pool={len(X)}) — forcing K=2")
                 chosen_k = min(2, len(X) - 1)
             else:
                 chosen_k, _ = find_optimal_meta_k(
-                    X, safe_range, n_init, RANDOM_SEED, method, log)
+                    X, range(2, safe_kmax + 1), n_init, RANDOM_SEED, method, log)
 
         chosen_k = max(2, min(chosen_k, len(X) - 1))
         log(f"  [Discovery] Meta-clustering K={chosen_k}")
@@ -229,27 +374,33 @@ def run_discovery_meta(classic_results, method, k_range, k_override, n_init, log
                 cluster_to_meta.get((name, int(h)), 0) for h in hab_col
             ])
 
-            # meta_centroids live in common_params space which may contain a
-            # virtual DTI-MD injected by load_mouse_data (_inject_virtual_md).
-            # cr["features"] only has the resolved parameters (no DTI-MD), so
-            # we must project meta_centroids into that same subspace before
-            # passing them to _draw_pca (which fits PCA on cr["features"]).
             mouse_params = list(cr["parameters"])
-            if common_params != mouse_params:
-                idx = [common_params.index(p) for p in mouse_params
-                       if p in common_params]
-                cents_viz = meta_centroids[:, idx]
-            else:
-                cents_viz = meta_centroids
+
+            # Per-mouse centroids: mean of this mouse's own voxels per meta-habitat.
+            # Used for the per-page heatmap so each page reflects the actual feature
+            # profile of that specific mouse rather than the global meta-centroids.
+            feats_m = cr["features"]
+            cents_pm = np.array([
+                feats_m[disc_lbls == c].mean(axis=0)
+                if (disc_lbls == c).any()
+                else np.zeros(len(mouse_params))
+                for c in range(chosen_k)
+            ])
 
             out[name] = {
                 "labels"       : disc_lbls,
-                "features"     : cr["features"],
+                "features"     : feats_m,
                 "parameters"   : mouse_params,
-                "centroids"    : cents_viz,
+                "centroids"    : cents_pm,
                 "common_params": common_params,
                 "k"            : chosen_k,
             }
+        # Expose global meta-centroids so run_comparative_pdf can build cross-
+        # method colour maps without iterating per-mouse results.
+        out["_meta"] = {
+            "centroids": meta_centroids,
+            "params"   : common_params,
+        }
         log(f"  [Discovery] Done — {len(out)} mice mapped", "ok")
         return out
 
@@ -262,7 +413,8 @@ def run_discovery_meta(classic_results, method, k_range, k_override, n_init, log
 
 # ── Per-axis drawing helpers ────────────────────────────────────────────────
 
-def _draw_pca(ax, features, labels, centroids, title, header_color):
+def _draw_pca(ax, features, labels, centroids, title, header_color,
+              color_map=None):
     if features is None or len(features) == 0:
         ax.text(0.5, 0.5, "N/A", transform=ax.transAxes,
                 ha="center", va="center", fontsize=12, color="#888888")
@@ -283,7 +435,7 @@ def _draw_pca(ax, features, labels, centroids, title, header_color):
         mask = labels == hid
         ax.scatter(pts[mask, 0], pts[mask, 1],
                    s=4, alpha=0.4, linewidths=0,
-                   color=_hcol(hid, 0.55), label=f"H{hid}")
+                   color=_hcol_mapped(hid, color_map, 0.55), label=f"H{hid}")
 
     if cents_2d is not None:
         present = set(np.unique(labels).tolist())
@@ -291,7 +443,7 @@ def _draw_pca(ax, features, labels, centroids, title, header_color):
             if hid not in present:
                 continue
             ax.scatter(c[0], c[1], marker="*", s=220,
-                       color=_hcol(hid), edgecolors="white",
+                       color=_hcol_mapped(hid, color_map), edgecolors="white",
                        linewidths=0.7, zorder=5)
 
     ax.set_title(title, fontsize=9, fontweight="bold", color=header_color)
@@ -302,14 +454,14 @@ def _draw_pca(ax, features, labels, centroids, title, header_color):
               edgecolor="#555577")
 
 
-def _draw_proportion_bar(ax, labels, k):
+def _draw_proportion_bar(ax, labels, k, color_map=None):
     ids    = np.arange(k)
     counts = np.array([np.sum(labels == i) for i in ids])
     total  = max(counts.sum(), 1)
     left   = 0.0
     for hid, count in zip(ids, counts):
         frac = count / total
-        ax.barh(0, frac, left=left, color=_hcol(hid),
+        ax.barh(0, frac, left=left, color=_hcol_mapped(hid, color_map),
                 height=0.6, linewidth=0)
         if frac > 0.04:
             ax.text(left + frac / 2, 0,
@@ -356,7 +508,9 @@ def _draw_centroid_heatmap(ax, centroids, parameters, k, color):
 
 # ── Per-mouse PDF page ──────────────────────────────────────────────────────
 
-def _mouse_page(pdf, mouse_name, classic, discovery, joint, date_str, settings_str):
+def _mouse_page(pdf, mouse_name, classic, discovery, joint, date_str,
+               settings_str, color_maps=None):
+    color_maps = color_maps or {}
     fig = plt.figure(figsize=(16, 10))
     fig.patch.set_facecolor("#1a1d23")
 
@@ -375,12 +529,12 @@ def _mouse_page(pdf, mouse_name, classic, discovery, joint, date_str, settings_s
                           hspace=0.45, wspace=0.3)
 
     cols = [
-        ("Classic",   classic,   _METHOD_COLORS["classic"]),
-        ("Discovery", discovery, _METHOD_COLORS["discovery"]),
-        ("Joint",     joint,     _METHOD_COLORS["joint"]),
+        ("Classic",   classic,   _METHOD_COLORS["classic"],   "classic"),
+        ("Discovery", discovery, _METHOD_COLORS["discovery"], "discovery"),
+        ("Joint",     joint,     _METHOD_COLORS["joint"],     "joint"),
     ]
 
-    for col, (label, res, hdr_col) in enumerate(cols):
+    for col, (label, res, hdr_col, cmap_key) in enumerate(cols):
         ax_pca  = fig.add_subplot(gs[0, col])
         ax_bar  = fig.add_subplot(gs[1, col])
         ax_heat = fig.add_subplot(gs[2, col])
@@ -400,15 +554,16 @@ def _mouse_page(pdf, mouse_name, classic, discovery, joint, date_str, settings_s
                         fontsize=10, color="#888888")
             continue
 
-        lbls   = res["labels"]
-        feats  = res["features"]
-        cents  = res["centroids"]
-        params = res.get("parameters") or res.get("common_params") or []
-        k      = res["k"]
-        title  = f"{label}  (K={k})"
+        lbls    = res["labels"]
+        feats   = res["features"]
+        cents   = res["centroids"]
+        params  = res.get("parameters") or res.get("common_params") or []
+        k       = res["k"]
+        title   = f"{label}  (K={k})"
+        c_map   = color_maps.get(cmap_key)
 
-        _draw_pca(ax_pca, feats, lbls, cents, title, hdr_col)
-        _draw_proportion_bar(ax_bar, lbls, k)
+        _draw_pca(ax_pca, feats, lbls, cents, title, hdr_col, color_map=c_map)
+        _draw_proportion_bar(ax_bar, lbls, k, color_map=c_map)
         ax_bar.set_title("Habitat proportions", fontsize=7, color="#aaaaaa")
         _draw_centroid_heatmap(ax_heat, cents, params, k, hdr_col)
 
@@ -418,28 +573,30 @@ def _mouse_page(pdf, mouse_name, classic, discovery, joint, date_str, settings_s
 
 # ── Segmentation maps page ──────────────────────────────────────────────────
 
-def _segmentation_page(pdf, mouse_name, classic, discovery, joint):
+def _segmentation_page(pdf, mouse_name, classic, discovery, joint,
+                       color_maps=None):
     """
     One landscape page per mouse: per-slice habitat maps.
     Layout: 3 columns (Classic | Discovery | Joint) × n_slices rows.
-    Colors match _hcol() used in the PCA scatter plots.
     Classic and Discovery share spatial coords from classic["df"].
     Joint uses its own "df" key (X, Y, Slice from df_pooled subset).
     """
     if classic is None:
         return
 
+    color_maps = color_maps or {}
     df_cl   = classic["df"]
     slices  = sorted(df_cl["Slice"].unique())
     n_sl    = len(slices)
 
     col_defs = [
         ("Classic",   classic,   _METHOD_COLORS["classic"],
-         df_cl),
+         df_cl,       color_maps.get("classic")),
         ("Discovery", discovery, _METHOD_COLORS["discovery"],
-         df_cl),
+         df_cl,       color_maps.get("discovery")),
         ("Joint",     joint,     _METHOD_COLORS["joint"],
-         joint["df"] if (joint is not None and "df" in joint) else df_cl),
+         joint["df"] if (joint is not None and "df" in joint) else df_cl,
+         color_maps.get("joint")),
     ]
 
     row_h   = 2.4
@@ -457,7 +614,7 @@ def _segmentation_page(pdf, mouse_name, classic, discovery, joint):
                           hspace=0.12, wspace=0.06)
 
     for row, sl in enumerate(slices):
-        for col, (label, res, hdr_col, df_sp) in enumerate(col_defs):
+        for col, (label, res, hdr_col, df_sp, c_map) in enumerate(col_defs):
             ax = fig.add_subplot(gs[row, col])
             ax.set_facecolor("#0d0d18")
             for sp in ax.spines.values():
@@ -500,32 +657,41 @@ def _segmentation_page(pdf, mouse_name, classic, discovery, joint):
             W = xs.max() + 1
             H = ys.max() + 1
 
-            img = np.zeros((H, W, 4), dtype=np.float32)
-            # Vectorised colour assignment
-            rgba = np.array([_hcol(int(l)) for l in lbls], dtype=np.float32)
+            img  = np.zeros((H, W, 4), dtype=np.float32)
+            rgba = np.array([_hcol_mapped(int(l), c_map) for l in lbls],
+                            dtype=np.float32)
             img[ys, xs, :3] = rgba[:, :3]
             img[ys, xs,  3] = 1.0
 
             ax.imshow(img, origin="lower", aspect="equal",
                       interpolation="nearest")
 
-    # Colour legend — small axes strip at the very bottom
+    # Colour legend — one row per method
     import matplotlib.patches as mpatches
-    unique_labs = sorted(np.unique(classic["labels"]))
-    n_labs      = len(unique_labs)
-    leg_ax      = fig.add_axes([0.06, 0.0, 0.88, 0.025])
+    leg_ax = fig.add_axes([0.06, 0.0, 0.88, 0.04])
     leg_ax.set_facecolor("#1a1d23")
     leg_ax.axis("off")
-    slot = 1.0 / max(n_labs, 1)
-    for i, hab in enumerate(unique_labs):
-        r, g, b, _ = _hcol(hab)
-        x0 = i * slot
-        leg_ax.add_patch(mpatches.Rectangle(
-            (x0 + slot * 0.05, 0.15), slot * 0.25, 0.70,
-            color=(r, g, b), transform=leg_ax.transAxes, clip_on=False))
-        leg_ax.text(x0 + slot * 0.35, 0.5, f"H{hab}",
-                    transform=leg_ax.transAxes, va="center",
-                    fontsize=8, color="#cccccc")
+    x_cursor = 0.0
+    for label, res, hdr_col, df_sp, c_map in col_defs:
+        if res is None:
+            continue
+        unique_labs = sorted(np.unique(res["labels"]))
+        n_labs      = len(unique_labs)
+        block_w     = 1.0 / 3
+        slot        = block_w / max(n_labs, 1)
+        for i, hab in enumerate(unique_labs):
+            col_rgba = _hcol_mapped(hab, c_map)
+            x0 = x_cursor + i * slot
+            leg_ax.add_patch(mpatches.Rectangle(
+                (x0 + slot * 0.05, 0.15), slot * 0.25, 0.70,
+                color=col_rgba[:3], transform=leg_ax.transAxes, clip_on=False))
+            leg_ax.text(x0 + slot * 0.35, 0.5, f"H{hab}",
+                        transform=leg_ax.transAxes, va="center",
+                        fontsize=7, color="#cccccc")
+        leg_ax.text(x_cursor + block_w * 0.5, -0.3, label,
+                    transform=leg_ax.transAxes, va="top",
+                    ha="center", fontsize=6, color=hdr_col)
+        x_cursor += block_w
 
     pdf.savefig(fig, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
@@ -588,7 +754,8 @@ def _cover_page(pdf, mice_names, method, k_range, k_override, norm, date_str):
 
 def run_comparative_pdf(mice_data, method, k_range, k_override,
                          n_init, n_refs, norm,
-                         out_dir, pdf_name, log=print):
+                         dtopo_weight=0.0,
+                         out_dir="", pdf_name="comparative_analysis", log=print):
     """
     Parameters
     ----------
@@ -598,7 +765,7 @@ def run_comparative_pdf(mice_data, method, k_range, k_override,
     k_override : str — digit string to force K, else ''
     n_init     : int
     n_refs     : int
-    norm       : 'robust_global', 'robust', 'cl_hybrid', or 'cl'  (for Joint step)
+    norm       : 'robust_global', 'robust', 'cl_hybrid', 'cl_global', or 'cl'  (for Joint step)
     out_dir    : directory where PDF is saved
     pdf_name   : filename without extension
     log        : callable(str[, tag])
@@ -643,6 +810,8 @@ def run_comparative_pdf(mice_data, method, k_range, k_override,
     # ── Step 3: Joint ────────────────────────────────────────────────────────
     log("Step 3/3 — Joint clustering")
     joint_per_mouse = {}
+    cents_arr  = None   # global joint centroids (k, n_params) for colour mapping
+    vis_params = []     # parameter names matching cents_arr columns
     try:
         mice_list_jt = [{"name": m["name"], "files": m["files"]} for m in mice_data]
         jt_out       = os.path.join(out_dir, "joint")
@@ -652,7 +821,7 @@ def run_comparative_pdf(mice_data, method, k_range, k_override,
             log_fn         = log,
             k_override     = (int(k_override) if str(k_override).strip().isdigit() else None),
             normalization  = norm,
-            dtopo_weight   = DTOPO_JOINT_WEIGHT,
+            dtopo_weight   = dtopo_weight,
             dtopo_min_frac = DTOPO_MIN_NECROSIS_FRACTION,
         )
         if res_jt and "df_pooled" in res_jt:
@@ -700,7 +869,45 @@ def run_comparative_pdf(mice_data, method, k_range, k_override,
     except Exception as e:
         log(f"  [Joint] Error: {e}")
 
-    # ── Step 4: Generate PDF ─────────────────────────────────────────────────
+    # ── Step 4: Build semantic colour maps ───────────────────────────────────
+    # Discovery global centroids come from the _meta key added by run_discovery_meta.
+    disc_meta    = (disc_per_mouse or {}).pop("_meta", None)
+    disc_col_map = {}
+    jt_col_map   = {}
+
+    try:
+        disc_cents_g  = disc_meta["centroids"] if disc_meta else None
+        disc_params_g = disc_meta["params"]    if disc_meta else []
+        disc_labels_g = (
+            np.concatenate([disc_per_mouse[n]["labels"]
+                            for n in disc_per_mouse])
+            if disc_per_mouse else None
+        )
+
+        jt_cents_g  = cents_arr if cents_arr is not None else None
+        jt_params_g = vis_params
+        jt_labels_g = (
+            np.concatenate([joint_per_mouse[n]["labels"]
+                            for n in joint_per_mouse])
+            if joint_per_mouse else None
+        )
+
+        if (disc_cents_g is not None and disc_labels_g is not None
+                and jt_cents_g is not None and jt_labels_g is not None):
+            disc_col_map, jt_col_map = _build_cross_color_maps(
+                disc_cents_g, disc_labels_g, disc_params_g,
+                jt_cents_g,   jt_labels_g,   jt_params_g,
+            )
+        elif disc_cents_g is not None and disc_labels_g is not None:
+            disc_col_map = _single_color_map(
+                disc_cents_g, disc_labels_g, disc_params_g)
+        elif jt_cents_g is not None and jt_labels_g is not None:
+            jt_col_map = _single_color_map(
+                jt_cents_g, jt_labels_g, jt_params_g)
+    except Exception as _ce:
+        log(f"  [colour] Semantic mapping skipped: {_ce}")
+
+    # ── Step 5: Generate PDF ─────────────────────────────────────────────────
     log("Generating PDF…")
     pdf_path = os.path.join(out_dir, f"{pdf_name}.pdf")
 
@@ -715,6 +922,22 @@ def run_comparative_pdf(mice_data, method, k_range, k_override,
             cl  = classic_results.get(name)
             dis = (disc_per_mouse or {}).get(name)
             jt  = joint_per_mouse.get(name)
+
+            # Classic: per-mouse signature colours (K may differ per mouse)
+            cl_col_map = {}
+            if cl is not None:
+                try:
+                    cl_col_map = _single_color_map(
+                        cl["centroids"], cl["labels"], cl["parameters"])
+                except Exception:
+                    pass
+
+            color_maps = {
+                "classic"  : cl_col_map,
+                "discovery": disc_col_map,
+                "joint"    : jt_col_map,
+            }
+
             _mouse_page(
                 pdf, name,
                 classic      = cl,
@@ -722,8 +945,9 @@ def run_comparative_pdf(mice_data, method, k_range, k_override,
                 joint        = jt,
                 date_str     = date_str,
                 settings_str = settings_str,
+                color_maps   = color_maps,
             )
-            _segmentation_page(pdf, name, cl, dis, jt)
+            _segmentation_page(pdf, name, cl, dis, jt, color_maps=color_maps)
 
     log(f"PDF saved → {pdf_path}", "ok")
 

@@ -597,6 +597,526 @@ def _save_fig(fig: plt.Figure, path: str) -> str:
     return path
 
 
+def _build_interpretation_pages(
+    pi_matrix, sigma2_matrix, residual_matrix,
+    perm_aitch, perm_mmd, pdisp_aitch, pdisp_mmd,
+    dirich_res, pi_mw_results, cond_mmd,
+    group_names, g_arr, common_params,
+    best_k, atlas, n_mice, out_dir
+) -> list[tuple[str, str]]:
+    """
+    Generate one or two A4-landscape pages of plain-language interpretation
+    of all Atlas statistical results.  Saved as PNG, returned as (path, caption)
+    tuples ready to be inserted in fig_paths.
+    """
+    import math as _math
+    import textwrap as _tw
+
+    unique_g   = sorted(set(g_arr.tolist()))
+    n_groups   = len(unique_g)
+    stability  = getattr(atlas, "stability_", {}) or {}
+    stable     = stability.get("stable", True)
+    mean_shifts = np.asarray(stability.get("mean_shift", np.zeros(best_k)), dtype=float)
+    max_shift   = float(np.max(mean_shifts)) if len(mean_shifts) else 0.0
+
+    p_aitch  = float(perm_aitch.get("p_value", 1.0))
+    p_mmd    = float(perm_mmd.get("p_value",   1.0))
+    p_dir    = float(dirich_res.get("p_value",  1.0))
+    r2_aitch = float(perm_aitch.get("R2", 0.0))
+    r2_mmd   = float(perm_mmd.get("R2",   0.0))
+    p_pdisp_a = float(pdisp_aitch.get("p_value", 1.0))
+    p_pdisp_m = float(pdisp_mmd.get("p_value",   1.0))
+
+    def _sig(p):
+        if p < 0.001: return f"p < 0.001  ***"
+        if p < 0.01:  return f"p = {p:.3f}  **"
+        if p < 0.05:  return f"p = {p:.3f}  *"
+        if p < 0.10:  return f"p = {p:.3f}  (tendance)"
+        return        f"p = {p:.3f}  n.s."
+
+    def _col(p):
+        if p < 0.05:  return "#1B5E20"   # dark green
+        if p < 0.10:  return "#E65100"   # orange
+        return "#616161"                  # grey
+
+    def _gname(g):
+        return group_names.get(int(g), f"G{g}")
+
+    # -----------------------------------------------------------------------
+    # Build a list of "line" records:
+    #   ("text", fontsize, bold, color, left_margin_fraction)
+    # -----------------------------------------------------------------------
+    Record = lambda txt, fs=9, bold=False, col="#222222", lm=0.04: \
+        (txt, fs, bold, col, lm)
+    SEP  = lambda: Record("", fs=3)
+    HEAD = lambda t: Record(t, fs=11.5, bold=True, col="#1A237E", lm=0.03)
+    RULE = lambda: Record("─" * 105, fs=6.5, col="#BDBDBD", lm=0.03)
+
+    page1, page2 = [], []
+
+    def add1(txt, fs=9, bold=False, col="#222222", lm=0.04):
+        page1.append(Record(txt, fs, bold, col, lm))
+
+    def add2(txt, fs=9, bold=False, col="#222222", lm=0.04):
+        page2.append(Record(txt, fs, bold, col, lm))
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # PAGE 1  — Stabilité · Tests globaux · Composition par habitat
+    # ═══════════════════════════════════════════════════════════════════════
+
+    add1("RAPPORT D'INTERPRÉTATION — ATLAS MULTI-ANIMAL", fs=14,
+         bold=True, col="#1A237E", lm=0.03)
+    add1(f"Cohorte : {n_mice} souris · {n_groups} groupes · {best_k} habitats universels  "
+         f"({', '.join(_gname(g) for g in unique_g)})", fs=9, col="#555555")
+    page1.append(RULE())
+    page1.append(SEP())
+
+    # ── ① Stabilité de l'atlas ─────────────────────────────────────────────
+    page1.append(HEAD("①  QUALITÉ ET STABILITÉ DE L'ATLAS"))
+    page1.append(RULE())
+
+    if stable:
+        add1(f"L'atlas est STABLE : les {best_k} habitats restent cohérents d'un bootstrap à l'autre "
+             f"(déplacement moyen maximal : {max_shift:.3f} unités IQR < seuil 0.10).",
+             col="#1B5E20")
+        add1("  → Les résultats per-habitat peuvent être interprétés avec confiance.",
+             col="#1B5E20", lm=0.06)
+    else:
+        worst_h = int(np.argmax(mean_shifts))
+        add1(f"⚠  INSTABILITÉ DÉTECTÉE : l'Habitat H{worst_h} présente un déplacement bootstrap "
+             f"élevé ({max_shift:.3f} > 0.10 unités IQR).",
+             bold=True, col="#B71C1C")
+        add1(f"  → Le nombre K = {best_k} habitats est peut-être trop grand pour cette cohorte. "
+             f"Essayer K = {best_k - 1} via 'K forcé' dans l'interface.",
+             col="#E65100", lm=0.06)
+        add1("  → Les conclusions par habitat doivent être interprétées avec prudence.",
+             col="#E65100", lm=0.06)
+
+    for h in range(best_k):
+        ms  = float(mean_shifts[h]) if h < len(mean_shifts) else 0.0
+        qlt = ("excellent (< 0.05)" if ms < 0.05 else
+               "bon (< 0.10)"       if ms < 0.10 else
+               "moyen (< 0.20)"     if ms < 0.20 else
+               "faible (≥ 0.20)  ⚠")
+        col = "#1B5E20" if ms < 0.10 else ("#E65100" if ms < 0.20 else "#B71C1C")
+        add1(f"     H{h} : déplacement moyen bootstrap = {ms:.4f}  [{qlt}]",
+             fs=8.5, col=col, lm=0.06)
+
+    page1.append(SEP())
+
+    # ── ② Tests globaux ────────────────────────────────────────────────────
+    page1.append(HEAD("②  TESTS STATISTIQUES GLOBAUX"))
+    page1.append(RULE())
+
+    # PERMANOVA Aitchison
+    add1(f"PERMANOVA (compositions Aitchison) :  F = {perm_aitch.get('F', 0):.2f}  |  "
+         f"R² = {r2_aitch:.3f} ({r2_aitch:.0%})  |  {_sig(p_aitch)}",
+         bold=True, col=_col(p_aitch))
+    if p_aitch < 0.05:
+        add1(f"  → Les PROPORTIONS d'habitats diffèrent significativement entre groupes. "
+             f"Le groupe explique {r2_aitch:.0%} de la variance compositionnelle totale.",
+             col="#1B5E20", lm=0.06)
+    elif p_aitch < 0.10:
+        add1("  → Tendance à une différence de composition (borderline). "
+             "Augmenter la cohorte pourrait révéler un effet réel.", col="#E65100", lm=0.06)
+    else:
+        add1("  → Aucune différence significative de composition : les tumeurs ont des proportions "
+             "d'habitats similaires entre groupes.", col="#616161", lm=0.06)
+
+    page1.append(SEP())
+
+    # PERMANOVA MMD
+    add1(f"PERMANOVA (distributions complètes — MMD) :  F = {perm_mmd.get('F', 0):.2f}  |  "
+         f"R² = {r2_mmd:.3f} ({r2_mmd:.0%})  |  {_sig(p_mmd)}",
+         bold=True, col=_col(p_mmd))
+    if p_mmd < 0.05:
+        add1(f"  → Les DISTRIBUTIONS DE VOXELS diffèrent entre groupes. Ce test capture également "
+             f"les différences intra-habitat (structure, texture MRI), pas seulement les proportions.",
+             col="#1B5E20", lm=0.06)
+    elif p_mmd < 0.10:
+        add1("  → Signal MMD borderline. La distribution complète diffère légèrement mais le résultat "
+             "n'est pas encore fiable.", col="#E65100", lm=0.06)
+    else:
+        add1("  → Distributions voxel-level non différentes entre groupes.", col="#616161", lm=0.06)
+
+    # Concordance entre les deux tests
+    if p_aitch < 0.05 and p_mmd < 0.05:
+        add1("  ✔  Les deux approches concordent : la différence est robuste "
+             "(composition ET distribution de voxels).", bold=True, col="#1B5E20", lm=0.06)
+    elif p_aitch >= 0.05 and p_mmd < 0.05:
+        add1("  ⚡  Dissociation : la composition globale n'est pas significative, mais la distribution "
+             "l'est. Les groupes partagent les mêmes proportions d'habitats mais ont des biologies "
+             "voxel-level distinctes. Chercher un effet sur la BIOLOGIE INTERNE des habitats (voir §⑥).",
+             col="#E65100", lm=0.06)
+    elif p_aitch < 0.05 and p_mmd >= 0.05:
+        add1("  ⚡  La composition diffère mais pas la distribution complète : les groupes ont des "
+             "proportions d'habitats différentes mais une biologie voxel-level similaire au sein de "
+             "chaque habitat. Effet purement quantitatif (volume) et non qualitatif (biologie).",
+             col="#E65100", lm=0.06)
+    page1.append(SEP())
+
+    # PERMDISP
+    if p_pdisp_a < 0.05 or p_pdisp_m < 0.05:
+        parts = []
+        if p_pdisp_a < 0.05: parts.append(f"π Aitchison : {_sig(p_pdisp_a)}")
+        if p_pdisp_m < 0.05: parts.append(f"MMD : {_sig(p_pdisp_m)}")
+        add1("PERMDISP (dispersion inégale) :  " + "  |  ".join(parts),
+             bold=True, col="#E65100")
+        add1("  → Un groupe est PLUS HÉTÉROGÈNE que l'autre (variabilité inter-souris plus grande). "
+             "Le PERMANOVA peut détecter cette dispersion plutôt qu'un vrai shift de centre. "
+             "Interpréter avec précaution : l'effet peut être dû à l'hétérogénéité d'un groupe.",
+             col="#E65100", lm=0.06)
+        add1("  → En oncologie, une dispersion élevée = hétérogénéité tumorale inter-individuelle "
+             "plus grande dans ce groupe (par ex. : tumeurs à des stades évolutifs différents).",
+             col="#E65100", lm=0.06)
+    else:
+        add1("PERMDISP : pas de différence de dispersion inter-groupe "
+             f"(π: {_sig(p_pdisp_a)}  |  MMD: {_sig(p_pdisp_m)}).", col="#616161")
+        add1("  → Le PERMANOVA reflète bien un vrai shift de position, pas un effet de dispersion.",
+             col="#1B5E20", lm=0.06)
+    page1.append(SEP())
+
+    # Dirichlet
+    lr = float(dirich_res.get("lr_stat", 0))
+    add1(f"Dirichlet regression (modèle multivarié) :  LR = {lr:.2f}  |  {_sig(p_dir)}",
+         bold=True, col=_col(p_dir))
+    if p_dir < 0.05:
+        add1("  → La composition d'habitats est globalement modifiée par le groupe dans un modèle "
+             "Dirichlet (adapté aux données compositionnelles). Confirme le PERMANOVA Aitchison.",
+             col="#1B5E20", lm=0.06)
+        coef = dirich_res.get("group_coef")
+        if coef is not None and len(coef):
+            try:
+                coef_arr = np.asarray(coef)
+                for h in range(min(best_k, coef_arr.shape[1] if coef_arr.ndim > 1 else len(coef_arr))):
+                    c_val = float(coef_arr[0, h] if coef_arr.ndim > 1 else coef_arr[h])
+                    fold  = float(np.exp(c_val))
+                    dirn  = "plus" if c_val > 0 else "moins"
+                    add1(f"     H{h} : coefficient = {c_val:+.3f}  →  {_gname(unique_g[-1])} a "
+                         f"{fold:.2f}× {dirn} d'H{h} que {_gname(unique_g[0])}.",
+                         fs=8.5, col="#333333", lm=0.06)
+            except Exception:
+                pass
+    else:
+        add1("  → Pas de modification globale de la composition selon la Dirichlet regression.",
+             col="#616161", lm=0.06)
+
+    page1.append(SEP())
+
+    # ── ③ Composition par habitat ──────────────────────────────────────────
+    page1.append(HEAD("③  ANALYSE DE COMPOSITION PAR HABITAT (π)"))
+    page1.append(RULE())
+    add1("π_h = proportion moyenne du volume tumoral assignée à l'Habitat h (soft-assignment GMM). "
+         "Somme des π sur tous les habitats = 1 par souris.", fs=8, col="#555555")
+    page1.append(SEP())
+
+    for h in range(best_k):
+        pi_means  = {g: float(np.mean(pi_matrix[g_arr == g, h])) for g in unique_g}
+        pi_sds    = {g: float(np.std( pi_matrix[g_arr == g, h], ddof=1)) for g in unique_g}
+        mw        = pi_mw_results[h] if h < len(pi_mw_results) else {}
+        p_adj     = float(mw.get("p_adj", 1.0))
+        reject    = bool(mw.get("reject", False))
+
+        max_g = max(pi_means, key=pi_means.get)
+        min_g = min(pi_means, key=pi_means.get)
+        diff  = pi_means[max_g] - pi_means[min_g]
+        ratio = pi_means[max_g] / max(pi_means[min_g], 1e-6)
+
+        stat_str = f"Mann-Whitney Bonferroni : {_sig(p_adj)}"
+        comp_str = "  |  ".join(
+            f"{_gname(g)} : {pi_means[g]:.1%} ± {pi_sds[g]:.1%}" for g in unique_g)
+        add1(f"H{h}  [{comp_str}]   [{stat_str}]",
+             fs=8.5, bold=True, col=_col(p_adj))
+
+        if reject:
+            add1(f"  → H{h} est significativement plus présent dans {_gname(max_g)} "
+                 f"(+{diff:.1%}, ratio {ratio:.1f}×). "
+                 f"Ce groupe présente davantage de tissu à la signature de cet habitat.",
+                 col="#1B5E20", lm=0.06)
+        else:
+            if diff > 0.10:
+                add1(f"  → Tendance non significative : {_gname(max_g)} > {_gname(min_g)} "
+                     f"(Δ = {diff:.1%}) mais non confirmée avec n = {n_mice}. "
+                     "Augmenter la cohorte.", col="#E65100", lm=0.06)
+            else:
+                add1(f"  → Proportion équivalente entre groupes (Δ = {diff:.1%} — effet négligeable).",
+                     col="#616161", lm=0.06)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # PAGE 2  — Hétérogénéité · Résidus · MMD conditionnel · Conclusions
+    # ═══════════════════════════════════════════════════════════════════════
+
+    add2("RAPPORT D'INTERPRÉTATION — ATLAS MULTI-ANIMAL  (suite)", fs=13,
+         bold=True, col="#1A237E", lm=0.03)
+    page2.append(RULE())
+    page2.append(SEP())
+
+    # ── ④ Hétérogénéité intra-habitat ─────────────────────────────────────
+    page2.append(HEAD("④  HÉTÉROGÉNÉITÉ INTRA-HABITAT  (σ²)"))
+    page2.append(RULE())
+    add2("σ²_h mesure la dispersion des voxels autour du centroïde de leur habitat dans chaque souris. "
+         "Grande valeur = habitat biologiquement hétéroclite (voxels très dispersés). "
+         "Faible valeur = habitat compact, biologie uniforme.", fs=8, col="#555555")
+    add2("Référence : σ² < 1.0 = compact · 1.0–2.0 = modéré · > 2.0 = très hétérogène.", fs=8, col="#555555")
+    page2.append(SEP())
+
+    for h in range(best_k):
+        s2_means = {g: float(np.mean(sigma2_matrix[g_arr == g, h])) for g in unique_g}
+        s2_sds   = {g: float(np.std( sigma2_matrix[g_arr == g, h], ddof=1)) for g in unique_g}
+        max_g = max(s2_means, key=s2_means.get)
+        min_g = min(s2_means, key=s2_means.get)
+        ratio = s2_means[max_g] / max(s2_means[min_g], 1e-6)
+        max_val = s2_means[max_g]
+
+        comp_str = "  |  ".join(
+            f"{_gname(g)} : {s2_means[g]:.3f} ± {s2_sds[g]:.3f}" for g in unique_g)
+        add2(f"H{h}  [{comp_str}]", fs=8.5, bold=True)
+
+        if max_val > 2.0 and ratio > 1.4:
+            add2(f"  → σ² ÉLEVÉ dans {_gname(max_g)} (> 2.0, ratio {ratio:.1f}×) : "
+                 f"l'Habitat H{h} capture des biologies très variées dans ce groupe. "
+                 "Possible transition entre états tissulaires ou biologie mal définie pour ces souris. "
+                 "Envisager une sous-analyse (Discovery Level 2) pour affiner.",
+                 col="#B71C1C", lm=0.06)
+        elif ratio > 1.5:
+            add2(f"  → H{h} est {ratio:.1f}× plus hétérogène dans {_gname(max_g)} "
+                 f"(σ² = {max_val:.3f}). "
+                 "La biologie de cet habitat est moins homogène dans ce groupe "
+                 "(ex : stades tumoraux multiples, hétérogénéité intra-tumorale).",
+                 col="#E65100", lm=0.06)
+        elif ratio > 1.2:
+            add2(f"  → Légère différence d'hétérogénéité dans H{h} : "
+                 f"{_gname(max_g)} est {ratio:.1f}× plus dispersé.", col="#E65100", lm=0.06)
+        else:
+            add2(f"  → σ² comparable entre groupes — H{h} est uniformément homogène.",
+                 col="#616161", lm=0.06)
+
+    page2.append(SEP())
+
+    # ── ⑤ Résidus atlas ────────────────────────────────────────────────────
+    page2.append(HEAD("⑤  FIDÉLITÉ À L'ATLAS  (résidu euclidien)"))
+    page2.append(RULE())
+    add2("Le résidu mesure la distance euclidienne moyenne entre les voxels d'une souris "
+         "et le centroïde de l'atlas pour cet habitat. "
+         "Grand résidu = la souris 'dépasse' l'atlas — biologie atypique ou sous-type rare.",
+         fs=8, col="#555555")
+    add2("Référence : résidu < 0.8 = bien aligné · 0.8–1.5 = modéré · > 1.5 = biologie atypique.",
+         fs=8, col="#555555")
+    page2.append(SEP())
+
+    for h in range(best_k):
+        r_means = {g: float(np.mean(residual_matrix[g_arr == g, h])) for g in unique_g}
+        r_sds   = {g: float(np.std( residual_matrix[g_arr == g, h], ddof=1)) for g in unique_g}
+        max_g   = max(r_means, key=r_means.get)
+        min_g   = min(r_means, key=r_means.get)
+        ratio   = r_means[max_g] / max(r_means[min_g], 1e-6)
+        max_val = r_means[max_g]
+
+        comp_str = "  |  ".join(
+            f"{_gname(g)} : {r_means[g]:.3f} ± {r_sds[g]:.3f}" for g in unique_g)
+        add2(f"H{h}  [{comp_str}]", fs=8.5, bold=True)
+
+        if max_val > 1.5:
+            add2(f"  → Résidu ÉLEVÉ dans {_gname(max_g)} pour H{h} (> 1.5) : "
+                 "ces souris s'écartent significativement du centroïde atlas. "
+                 "Leur biologie dans cet habitat est atypique — sous-type non représenté "
+                 "dans la moyenne de cohorte, ou artefact technique (qualité du scan).",
+                 col="#B71C1C", lm=0.06)
+        elif ratio > 1.4:
+            add2(f"  → {_gname(max_g)} s'écarte davantage de l'atlas dans H{h} "
+                 f"(résidu {ratio:.1f}× plus grand). "
+                 "La biologie de cet habitat est légèrement plus éloignée du prototype moyen.",
+                 col="#E65100", lm=0.06)
+        else:
+            add2(f"  → Les deux groupes sont bien alignés avec l'atlas dans H{h}.",
+                 col="#616161", lm=0.06)
+
+    page2.append(SEP())
+
+    # ── ⑥ MMD conditionnel ─────────────────────────────────────────────────
+    page2.append(HEAD("⑥  BIOLOGIE INTERNE DES HABITATS — MMD CONDITIONNEL"))
+    page2.append(RULE())
+    add2("Le MMD conditionnel teste si, pour les voxels ASSIGNÉS à un même habitat (argmax), "
+         "la distribution multivariée MRI est identique entre groupes. "
+         "C'est la question : 'H{h} a-t-il la même signature MRI dans les deux groupes ?'",
+         fs=8, col="#555555")
+    add2("Différence significative = même label, biologie différente = sous-type latent non capturé par l'atlas.",
+         fs=8, col="#555555")
+    page2.append(SEP())
+
+    n_cond_sig = 0
+    for h in range(best_k):
+        cm = cond_mmd[h] if h < len(cond_mmd) else {}
+        mmd_sq = cm.get("mmd_sq", float("nan"))
+        p_h    = cm.get("p_value", float("nan"))
+        n_a    = int(cm.get("n_a", 0))
+        n_b    = int(cm.get("n_b", 0))
+        sigma  = float(cm.get("sigma", float("nan")))
+
+        if _math.isnan(mmd_sq):
+            add2(f"H{h}  — MMD² non calculable (voxels insuffisants : "
+                 f"n = {n_a} + {n_b} < 10 par groupe).", fs=8.5, col="#AAAAAA")
+            add2("  → Augmenter le nombre de souris ou vérifier que cet habitat est bien représenté "
+                 "dans les deux groupes.", col="#AAAAAA", lm=0.06)
+            continue
+
+        if not _math.isnan(p_h) and p_h < 0.05:
+            n_cond_sig += 1
+
+        p_str = _sig(p_h) if not _math.isnan(p_h) else "non disponible"
+        sigma_str = f"σ = {sigma:.4f}" if not _math.isnan(sigma) else ""
+        add2(f"H{h}  — MMD² = {mmd_sq:.5f}  |  {p_str}  "
+             f"(n_A = {n_a}, n_B = {n_b}{', ' + sigma_str if sigma_str else ''})",
+             fs=8.5, bold=True, col=_col(p_h) if not _math.isnan(p_h) else "#616161")
+
+        if not _math.isnan(p_h) and p_h < 0.05:
+            add2(f"  → BIOLOGIE INTERNE DIFFÉRENTE dans H{h} entre groupes : "
+                 "même en ayant le même 'label', les voxels H{h} ont une signature MRI "
+                 "distincte selon le groupe. L'atlas ne sépare pas ce sous-type.",
+                 col="#1B5E20", lm=0.06)
+            add2(f"  → Recommandation : lancer une analyse Discovery (Level 2) ciblée sur H{h} "
+                 "pour identifier la structure latente. Ou enrichir l'atlas avec plus de souris "
+                 f"pour permettre un K plus élevé.", col="#1565C0", lm=0.06)
+        elif not _math.isnan(p_h):
+            add2(f"  → Biologie interne équivalente dans H{h} : l'effet entre groupes dans cet "
+                 "habitat est purement quantitatif (proportion différente, pas la biologie).",
+                 col="#616161", lm=0.06)
+
+    page2.append(SEP())
+
+    # ── ⑦ Conclusion ───────────────────────────────────────────────────────
+    page2.append(HEAD("⑦  CONCLUSION GLOBALE ET RECOMMANDATIONS"))
+    page2.append(RULE())
+
+    n_sig = sum(1 for p in [p_aitch, p_mmd, p_dir] if p < 0.05)
+    n_hab_sig = sum(1 for h in range(best_k)
+                    if h < len(pi_mw_results) and pi_mw_results[h].get("reject", False))
+
+    if n_sig == 3:
+        add2("CONCLUSION FORTE : Les trois tests globaux sont significatifs. "
+             "La différence entre groupes est robuste et confirmée à deux niveaux "
+             "(composition des habitats ET distribution voxel-level).",
+             bold=True, col="#1B5E20")
+    elif n_sig == 2:
+        add2("CONCLUSION MODÉRÉE : Deux tests globaux sur trois sont significatifs. "
+             "Il existe une différence réelle entre groupes, confirmée par deux approches indépendantes.",
+             bold=True, col="#2E7D32")
+    elif n_sig == 1:
+        add2("SIGNAL FAIBLE : Un seul test global significatif. "
+             "La différence existe mais est visible à un seul niveau d'analyse. "
+             "Augmenter n ou vérifier la qualité des données.",
+             bold=True, col="#E65100")
+    else:
+        add2("PAS DE DIFFÉRENCE GLOBALE DÉTECTÉE. "
+             "Les groupes ont des habitats tumoraux similaires (composition ET distribution). "
+             "Causes possibles : effet trop subtil, cohorte insuffisante, ou vraie similarité biologique.",
+             bold=True, col="#616161")
+
+    page2.append(SEP())
+
+    if n_hab_sig:
+        add2(f"• {n_hab_sig} habitat(s) sur {best_k} montrent une différence de proportion significative "
+             f"(Mann-Whitney Bonferroni). Ce sont les candidats biologiques prioritaires à valider "
+             f"par immunohistochimie ou marqueurs moléculaires.")
+    if n_cond_sig:
+        add2(f"• {n_cond_sig} habitat(s) ont une biologie interne différente (MMD conditionnel). "
+             "Priorité absolue pour sous-analyse Discovery (Level 2) ou validation histologique.")
+    if not stable:
+        add2(f"• ⚠  Atlas instable — les analyses par habitat sont indicatives, pas définitives. "
+             f"Essayer K = {best_k - 1} ou augmenter la cohorte.", col="#B71C1C")
+    if n_mice < 6:
+        add2(f"• PUISSANCE LIMITÉE : n = {n_mice} souris. "
+             "Les tests de permutation sont peu fiables sous 6 animaux par groupe. "
+             "Valider sur une cohorte plus large avant conclusion.", col="#E65100")
+    if p_pdisp_a < 0.05 or p_pdisp_m < 0.05:
+        add2("• Dispersion inégale détectée (PERMDISP) : interpréter les tests PERMANOVA "
+             "avec prudence — l'effet peut refléter une hétérogénéité inter-souris plus grande "
+             "dans un groupe (ex : stades tumoraux mixtes) plutôt qu'un vrai shift de biologie moyenne.",
+             col="#E65100")
+
+    page2.append(SEP())
+
+    # ── ⑧ Notes méthodologiques ────────────────────────────────────────────
+    page2.append(HEAD("⑧  NOTES MÉTHODOLOGIQUES ET LIMITES"))
+    page2.append(RULE())
+
+    notes = [
+        "PERMANOVA est sensible à la dispersion inégale entre groupes. "
+        "Toujours vérifier PERMDISP avant d'interpréter un PERMANOVA significatif.",
+
+        "La distance d'Aitchison (CLR + Euclidien) est adaptée aux compositions (somme = 1) "
+        "et invariante aux redimensionnements. Elle est plus robuste que la distance euclidienne brute sur π.",
+
+        "Le MMD (Maximum Mean Discrepancy) utilise un noyau RBF dont la bande passante σ est estimée "
+        "par la médiane des distances voxel-level. Sur des cohortes très hétérogènes, σ peut être biaisé "
+        "vers des valeurs trop grandes, réduisant la sensibilité.",
+
+        "La Dirichlet regression suppose que π suit une loi Dirichlet. Si un habitat est absent "
+        "dans une souris (π ≈ 0), un pseudo-compte ε est ajouté — les coefficients log-ratio "
+        "peuvent alors être légèrement biaisés vers zéro.",
+
+        f"Le nombre K = {best_k} habitats a été sélectionné par vote majoritaire (BIC / ICL / Silhouette). "
+        "Ce K est optimal pour cette cohorte et cette normalisation — il peut différer si la cohorte ou "
+        "la normalisation changent.",
+
+        "L'atlas est construit sur un sous-échantillon équilibré de 500 voxels par souris (tirage avec "
+        "remplacement), garantissant un poids égal indépendamment de la taille tumorale. "
+        "Les tumeurs très petites (< 500 voxels) contribuent avec plus de répétitions.",
+
+        "Le soft-assignment (π) est calculé par la probabilité a posteriori GMM, plus stable que "
+        "l'assignement dur (argmax). Le MMD conditionnel utilise l'assignement dur — ses résultats "
+        "dépendent de la netteté des frontières entre habitats.",
+
+        "Les corrections multiples (Bonferroni × K) sur les tests Mann-Whitney per-habitat sont "
+        "conservatrices — un p_adj borderline (0.05–0.15) mérite attention même s'il est non significatif.",
+    ]
+    for i, note in enumerate(notes, 1):
+        wrapped = _tw.fill(f"{'•' if i > 0 else ' '}  {note}", width=120)
+        for j, line in enumerate(wrapped.split("\n")):
+            add2(line, fs=7.8, col="#444444", lm=0.04 if j == 0 else 0.07)
+        page2.append(SEP())
+
+    # -----------------------------------------------------------------------
+    # Render pages to PNG
+    # -----------------------------------------------------------------------
+    def _render_page(records, out_path):
+        fig = plt.figure(figsize=(13.0, 9.5))
+        fig.patch.set_facecolor("white")
+        ax  = fig.add_axes([0, 0, 1, 1])
+        ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
+        ax.add_patch(plt.Rectangle((0, 0), 1, 1, facecolor="white", zorder=0))
+
+        y    = 0.975
+        dy_base = 0.013          # baseline line height for fs=9
+        for (txt, fs, bold, col, lm) in records:
+            if not txt:
+                y -= dy_base * 0.35
+                continue
+            dy  = dy_base * (fs / 9.0)
+            fw  = "bold" if bold else "normal"
+            ax.text(lm, y, txt, fontsize=fs, fontweight=fw, color=col,
+                    va="top", ha="left", transform=ax.transAxes,
+                    fontfamily="monospace",
+                    clip_on=True)
+            y  -= dy
+            if y < 0.005:
+                break
+
+        fig.savefig(out_path, dpi=150, bbox_inches="tight",
+                    facecolor="white", edgecolor="none")
+        plt.close(fig)
+
+    p1_path = os.path.join(out_dir, "interp_page1.png")
+    p2_path = os.path.join(out_dir, "interp_page2.png")
+    _render_page(page1, p1_path)
+    _render_page(page2, p2_path)
+
+    return [
+        (p1_path, "Rapport d'interprétation — Page 1 : stabilité · tests globaux · composition"),
+        (p2_path, "Rapport d'interprétation — Page 2 : hétérogénéité · résidus · MMD conditionnel · conclusions"),
+    ]
+
+
 def _build_pdf(pdf_path: str, fig_paths: list[tuple[str, str]],
                cover_text: str):
     import matplotlib.image as mpimg
@@ -638,6 +1158,7 @@ def run_atlas_pipeline(
     k_range        : range           = range(2, 8),
     k_override     : int | None      = None,
     normalization  : str             = "robust",
+    dtopo_weight   : float           = 0.0,
     n_init         : int             = 20,
     n_bootstrap    : int             = 30,
     n_perm         : int             = 999,
@@ -699,6 +1220,9 @@ def run_atlas_pipeline(
             out_dir=out_dir,
             log=log)
 
+    if dtopo_weight > 0:
+        log(f"  [d_topo] weight={dtopo_weight} — note: d_topo two-pass is not yet "
+            f"implemented in the Atlas pipeline. Parameter accepted but ignored.")
     log(f"═══ Step 3 / 6 — Fit frozen atlas  (K={best_k}) ═══")
     atlas = WeightedAtlas(k=best_k, n_init=n_init, seed=RANDOM_SEED)
     atlas.fit(features, mouse_ids, common_params)
@@ -838,6 +1362,33 @@ def run_atlas_pipeline(
                               mouse_names, g_arr, group_names, best_k)):
         safe_name = mouse_names[i].replace(" ", "_").replace("/", "-")
         _save(f"fmap_{i:02d}_{safe_name}.png", fig_map, caption_map)
+
+    # Interpretation pages
+    log("  Generating interpretation report…")
+    try:
+        interp_pages = _build_interpretation_pages(
+            pi_matrix       = pi_matrix,
+            sigma2_matrix   = sigma2_matrix,
+            residual_matrix = residual_matrix,
+            perm_aitch      = perm_aitch,
+            perm_mmd        = perm_mmd,
+            pdisp_aitch     = pdisp_aitch,
+            pdisp_mmd       = pdisp_mmd,
+            dirich_res      = dirich_res,
+            pi_mw_results   = pi_mw_results,
+            cond_mmd        = cond_mmd,
+            group_names     = group_names,
+            g_arr           = g_arr,
+            common_params   = common_params,
+            best_k          = best_k,
+            atlas           = atlas,
+            n_mice          = n_mice,
+            out_dir         = out_dir,
+        )
+        fig_paths.extend(interp_pages)
+        log("  Interpretation pages added to PDF.", "ok")
+    except Exception as _ie:
+        log(f"  [!] Interpretation page skipped: {_ie}")
 
     # Cover text
     k_line = (f"K={best_k}  (BIC selection)" if not k_override

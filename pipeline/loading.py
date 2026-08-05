@@ -91,6 +91,16 @@ def robust_scale(df_all, parameters):
     return df_scaled, features_scaled, scaling_info
 
 
+def save_scaling_info(scaling_info: dict, out_dir: str) -> None:
+    """Save tumor medians and IQR (raw, unscaled) to scaling_params.csv.
+    Used by Discovery to build cohort-level tumor profile figures."""
+    rows = [{"parameter": p, "median_raw": v["median"], "iqr_raw": v["iqr"]}
+            for p, v in scaling_info.items()]
+    pd.DataFrame(rows).to_csv(
+        os.path.join(out_dir, "scaling_params.csv"), index=False
+    )
+
+
 def resolve_dti_parameters(parameters):
     """
     Remove DTI-MD when both DTI-AD and DTI-RD are present (MD is a linear

@@ -29,6 +29,7 @@ _TR = {
     "open_napari"          : {"en": "Open in Napari",    "fr": "Ouvrir dans Napari", "es": "Abrir en Napari"},
     "close"                : {"en": "Close",             "fr": "Fermer",             "es": "Cerrar"},
     "add_mouse"            : {"en": "+ Add mouse",       "fr": "+ Ajouter souris",   "es": "+ Añadir ratón"},
+    "import_parent_folder" : {"en": "📂 Import folder",  "fr": "📂 Importer dossier", "es": "📂 Importar carpeta"},
     "run_ia"               : {"en": "▶  Run inter-animal comparison",
                                "fr": "▶  Lancer comparaison inter-animal",
                                "es": "▶  Ejecutar comparación inter-animal"},
@@ -123,6 +124,21 @@ _TR = {
     "norm_hybrid_hint"     : {"en": "Offset anchored to the bottom 10 % of all measured voxels (including non-tumor ROIs). More stable across heterogeneous tumors.",
                                "fr": "Offset ancré au 10e percentile de tous les voxels mesurés (incluant les ROIs non-tumorales). Plus stable entre tumeurs hétérogènes.",
                                "es": "Offset anclado al percentil 10 de todos los vóxeles medidos (incluyendo ROIs no tumorales). Más estable entre tumores heterogéneos."},
+    "norm_robust_hint"     : {"en": "Centers each voxel by the tumor's own median and scales by the tumor IQR. "
+                                     "Standard normalization for single-mouse analysis — preserves intra-tumor heterogeneity intact.",
+                               "fr": "Centre chaque voxel sur la médiane tumorale et normalise par l'IQR tumoral. "
+                                     "Normalisation standard pour l'analyse mono-souris — préserve l'hétérogénéité intra-tumorale intacte.",
+                               "es": "Centra cada vóxel en la mediana tumoral y escala por el IQR tumoral. "
+                                     "Normalización estándar para análisis de un solo ratón — preserva la heterogeneidad intra-tumoral intacta."},
+    "norm_permouse_robust_hint": {"en": "Each mouse is independently normalized by its own tumor median and IQR. "
+                                        "Removes inter-mouse signal differences — useful for building an atlas where "
+                                        "relative intra-tumor structure matters more than absolute intensity levels.",
+                                   "fr": "Chaque souris est normalisée indépendamment par sa propre médiane et IQR tumoraux. "
+                                         "Supprime les différences de signal inter-souris — utile pour construire un atlas où "
+                                         "la structure intra-tumorale relative prime sur les niveaux d'intensité absolus.",
+                                   "es": "Cada ratón se normaliza independientemente por su propia mediana e IQR tumorales. "
+                                         "Elimina las diferencias de señal inter-ratón — útil para construir un atlas donde "
+                                         "la estructura intra-tumoral relativa importa más que los niveles de intensidad absolutos."},
     "progress"             : {"en": "Progress",  "fr": "Progression",  "es": "Progreso"},
 
     # ── Output tab ──────────────────────────────────────────────────────────
@@ -652,6 +668,40 @@ _TR = {
     "mice_raw_csv"      : {"en": "Mice  (select raw MRI CSV files per mouse)",
                            "fr": "Souris  (sélectionner les fichiers CSV IRM bruts par souris)",
                            "es": "Ratones  (seleccionar archivos CSV IRM brutos por ratón)"},
+    "jt_space_section"  : {
+        "en": "Joint space  —  normalisation & topology",
+        "fr": "Espace commun  —  normalisation & topologie",
+        "es": "Espacio común  —  normalización & topología"},
+    "atl_construction_section": {
+        "en": "Atlas construction",
+        "fr": "Construction de l'atlas",
+        "es": "Construcción del atlas"},
+    "atl_validation_section": {
+        "en": "Statistical validation",
+        "fr": "Validation statistique",
+        "es": "Validación estadística"},
+    "atl_validation_hint": {
+        "en": "Bootstrap checks atlas stability (shift < 0.10 = stable). "
+               "Permutations control the precision of PERMANOVA and PERMDISP p-values.",
+        "fr": "Le bootstrap vérifie la stabilité de l'atlas (déplacement < 0,10 = stable). "
+               "Les permutations contrôlent la précision des p-valeurs PERMANOVA et PERMDISP.",
+        "es": "El bootstrap verifica la estabilidad del atlas (desplazamiento < 0,10 = estable). "
+               "Las permutaciones controlan la precisión de los p-valores PERMANOVA y PERMDISP."},
+    "cmp_common_section": {
+        "en": "Common parameters  —  Classic · Discovery · Joint",
+        "fr": "Paramètres communs  —  Classic · Découverte · Joint",
+        "es": "Parámetros comunes  —  Clásico · Descubrimiento · Conjunto"},
+    "cmp_common_hint"   : {
+        "en": "Discovery re-uses the same method and K range applied automatically "
+               "to per-mouse Classic centroids — no extra parameters needed.",
+        "fr": "Discovery réutilise la même méthode et plage de K appliquées automatiquement "
+               "aux centroïdes Classic par souris — aucun paramètre supplémentaire requis.",
+        "es": "Discovery reutiliza el mismo método y rango de K aplicados automáticamente "
+               "a los centroides Classic por ratón — no se necesitan parámetros adicionales."},
+    "cmp_joint_section" : {
+        "en": "Joint  —  specific parameters",
+        "fr": "Joint  —  paramètres spécifiques",
+        "es": "Joint  —  parámetros específicos"},
     "joint_norm_section": {"en": "Joint normalization",
                            "fr": "Normalisation conjointe",
                            "es": "Normalización conjunta"},
@@ -706,6 +756,58 @@ _TR = {
                            "fr": "Forcer le nombre de méta-habitats (0 = auto)",
                            "es": "Forzar número de meta-hábitats (0 = auto)"},
 
+    "disc_merge_section": {
+        "en": "2nd pass — directional merge",
+        "fr": "2e passe — fusion directionnelle",
+        "es": "2a pasada — fusión direccional"},
+    "disc_merge_desc": {
+        "en": "Compare meta-habitat directions (cosine similarity). "
+              "Habitats pointing the same way but at different amplitudes are merge candidates.",
+        "fr": "Compare la direction des méta-habitats (similarité cosinus). "
+              "Les habitats dans la même direction mais d'amplitudes différentes sont candidats à la fusion.",
+        "es": "Compara la dirección de los meta-hábitats (similitud coseno). "
+              "Los hábitats en la misma dirección pero amplitud diferente son candidatos a fusión."},
+    "disc_merge_off"      : {"en": "Off  (no 2nd pass)",
+                              "fr": "Désactivé  (pas de 2e passe)",
+                              "es": "Desactivado  (sin 2a pasada)"},
+    "disc_merge_suggest"  : {"en": "Suggest  (report candidates, no relabelling)  — default",
+                              "fr": "Suggérer  (rapport des candidats, sans refusion)  — défaut",
+                              "es": "Sugerir  (reporte candidatos, sin refusionar)  — defecto"},
+    "disc_merge_auto"     : {"en": "Auto-merge  (apply merge, reduce K)",
+                              "fr": "Fusion auto  (appliquer la fusion, réduire K)",
+                              "es": "Fusión auto  (aplicar fusión, reducir K)"},
+    "disc_merge_threshold": {"en": "Cosine threshold",
+                              "fr": "Seuil cosinus",
+                              "es": "Umbral coseno"},
+
+    # ── Level 2 sub-clustering ────────────────────────────────────────────────
+    "disc_sub_section": {"en": "Level 2 — intra-habitat sub-clustering",
+                         "fr": "Niveau 2 — sous-clustering intra-habitat",
+                         "es": "Nivel 2 — sub-clustering intra-hábitat"},
+    "disc_sub_desc"   : {
+        "en": ("Within each meta-habitat, pool raw voxels from all mice and fit "
+               "a BIC-optimal GMM to find sub-populations. Results saved in a "
+               "separate Level-2 PDF. Disabled by default."),
+        "fr": ("Pour chaque méta-habitat, pool des voxels bruts de toutes les souris "
+               "et ajuste un GMM BIC-optimal pour trouver des sous-populations. "
+               "Résultats dans un PDF Niveau-2 séparé. Désactivé par défaut."),
+        "es": ("Para cada meta-hábitat, agrupa voxels brutos de todos los ratones y "
+               "ajusta un GMM óptimo por BIC para encontrar sub-poblaciones. "
+               "Resultados en un PDF de Nivel-2 separado. Desactivado por defecto."),
+    },
+    "disc_sub_enable" : {"en": "Enable sub-clustering  (separate PDF)",
+                         "fr": "Activer le sous-clustering  (PDF séparé)",
+                         "es": "Activar sub-clustering  (PDF separado)"},
+    "disc_sub_k_max"  : {"en": "Max K_sub",
+                         "fr": "K_sub max",
+                         "es": "K_sub máx"},
+    "disc_sub_k_note" : {"en": "(K=1 always tested — no split if homogeneous)",
+                         "fr": "(K=1 toujours testé — pas de split si homogène)",
+                         "es": "(K=1 siempre probado — sin división si homogéneo)"},
+    "disc_sub_min_vox": {"en": "Min voxels per MH",
+                         "fr": "Voxels min par MH",
+                         "es": "Voxels mín por MH"},
+
     # ── Group comparison (Discovery & Joint) ─────────────────────────────────
     "group_compare_section": {
         "en": "Group comparison  (optional)",
@@ -740,11 +842,23 @@ _TR = {
     "dlg_select_folder" : {"en": "Select the animal's folder",
                            "fr": "Sélectionner le dossier de l'animal",
                            "es": "Seleccionar la carpeta del animal"},
+    "dlg_select_parent_folder": {
+        "en": "Select parent folder — one subfolder per mouse",
+        "fr": "Sélectionner le dossier parent — un sous-dossier par souris",
+        "es": "Seleccionar carpeta padre — una subcarpeta por ratón"},
     "warn_empty_folder" : {"en": "Empty folder",    "fr": "Dossier vide",    "es": "Carpeta vacía"},
     "warn_no_csv_in_folder": {
         "en": "No .csv file found in this folder.",
         "fr": "Aucun fichier .csv trouvé dans ce dossier.",
         "es": "No se encontró ningún archivo .csv en esta carpeta."},
+    "warn_no_csv_subfolders": {
+        "en": "No subfolder containing CSV files was found in:\n{path}",
+        "fr": "Aucun sous-dossier contenant des fichiers CSV n'a été trouvé dans :\n{path}",
+        "es": "No se encontró ninguna subcarpeta con archivos CSV en:\n{path}"},
+    "warn_no_csv_subfolders_title": {
+        "en": "No mouse found",
+        "fr": "Aucune souris trouvée",
+        "es": "Ningún ratón encontrado"},
 
     # ── Atlas tab ────────────────────────────────────────────────────────────
     "atl_title"         : {"en": "Atlas  —  Inter-Animal Habitat Comparison",
@@ -835,10 +949,48 @@ _TR = {
         "es": "Agrupe todos los vóxeles de N ratones (normalización robusta por ratón), ejecute "
                "un clustering único para descubrir hábitats universales que abarquen todos los "
                "animales simultáneamente. Mismo color = mismo hábitat en cada ratón."},
+    "norm_robust_recal_jt_radio": {
+        "en": "Recalibrated  —  grand-median center + per-mouse IQR scale  (recommended)",
+        "fr": "Recalibré  —  centrage grande médiane + échelle IQR par souris  (recommandé)",
+        "es": "Recalibrado  —  centro gran mediana + escala IQR por ratón  (recomendado)"},
+    "norm_robust_recal_jt_hint": {
+        "en": "Aligns all mice to a common biological reference (grand-median of per-mouse tumor medians, "
+               "IQR-scaled per mouse). Inter-mouse differences in absolute signal level are preserved — "
+               "a globally necrotic tumor stays negative relative to a healthy one. "
+               "Recommended for a single cohort acquired on the same scanner.",
+        "fr": "Aligne toutes les souris sur un référentiel commun (grande médiane des médianes tumorales, "
+               "normalisée par l'IQR propre à chaque souris). Les différences inter-souris de signal absolu "
+               "sont préservées — une tumeur globalement nécrotique reste négative par rapport à une saine. "
+               "Recommandé pour une cohorte unique acquise sur le même scanner.",
+        "es": "Alinea todos los ratones en una referencia biológica común (gran mediana de medianas tumorales, "
+               "escalada por el IQR propio de cada ratón). Las diferencias inter-ratón en señal absoluta se "
+               "preservan. Recomendado para una sola cohorte adquirida en el mismo escáner."},
+    "norm_robust_cohort_jt_radio": {
+        "en": "Cohort-median  —  0 = grand-median of per-mouse medians",
+        "fr": "Médiane de cohorte  —  0 = grande médiane des médianes par souris",
+        "es": "Mediana de cohorte  —  0 = gran mediana de medianas por ratón"},
+    "norm_robust_cohort_jt_hint": {
+        "en": "Centers each mouse by the cohort grand-median (median of per-mouse tumor medians — "
+               "each mouse contributes equally regardless of tumor size). Mice with globally lower "
+               "or higher signal remain separated in the joint space, allowing Joint to discover "
+               "truly universal habitats. Scale = cohort IQR after centering. "
+               "Best choice when mice have biologically different overall tumor profiles.",
+        "fr": "Centre chaque souris par la grande médiane de la cohorte (médiane des médianes tumorales "
+               "par souris — chaque souris contribue équitablement quelle que soit la taille de sa tumeur). "
+               "Les souris avec un signal globalement plus bas ou plus haut restent séparées dans l'espace "
+               "joint, permettant au Joint de découvrir des habitats vraiment universels. "
+               "Échelle = IQR de la cohorte après centrage. "
+               "Meilleur choix quand les souris ont des profils tumoraux globalement différents.",
+        "es": "Centra cada ratón por la gran mediana de la cohorte (mediana de las medianas tumorales "
+               "por ratón — cada ratón contribuye equitativamente independientemente del tamaño tumoral). "
+               "Los ratones con señal globalmente menor o mayor permanecen separados en el espacio conjunto, "
+               "permitiendo al Joint descubrir hábitats verdaderamente universales. "
+               "Escala = IQR de la cohorte tras el centrado. "
+               "Mejor opción cuando los ratones tienen perfiles tumorales globalmente diferentes."},
     "norm_robust_global_jt_radio": {
-        "en": "Global robust  —  ONE scaler on all pooled voxels  (recommended)",
-        "fr": "Robuste global  —  UN seul scaler sur tous les voxels poolés  (recommandé)",
-        "es": "Robusto global  —  UN escalador sobre todos los vóxeles agrupados  (recomendado)"},
+        "en": "Global robust  —  ONE scaler on all pooled voxels",
+        "fr": "Robuste global  —  UN seul scaler sur tous les voxels poolés",
+        "es": "Robusto global  —  UN escalador sobre todos los vóxeles agrupados"},
     "norm_robust_global_jt_hint": {
         "en": "Fits one RobustScaler on all voxels from all mice pooled together. "
                "Preserves true inter-mouse biological differences while keeping parameters "
@@ -854,12 +1006,17 @@ _TR = {
         "fr": "Robuste par souris  —  0 = médiane tumorale de chaque souris",
         "es": "Robusto por ratón  —  0 = mediana tumoral de cada ratón"},
     "norm_robust_jt_hint": {
-        "en": "Each mouse is scaled by its own tumor median/IQR before pooling. "
-               "Preserves intra-mouse heterogeneity; best results for cross-animal clustering.",
+        "en": "Each mouse is normalized by its own tumor median and IQR before pooling. "
+               "Removes inter-mouse signal offsets while preserving intra-tumor structure. "
+               "Recommended when mice come from different groups or scanners, or whenever "
+               "relative habitat patterns matter more than absolute signal levels.",
         "fr": "Chaque souris est normalisée par sa propre médiane/IQR tumorale avant pooling. "
-               "Préserve l'hétérogénéité intra-souris ; meilleurs résultats pour le clustering inter-animal.",
-        "es": "Cada ratón se escala por su propia mediana/IQR tumoral antes del agrupamiento. "
-               "Preserva la heterogeneidad intra-ratón; mejores resultados para el clustering inter-animal."},
+               "Supprime les offsets de signal inter-souris tout en préservant la structure intra-tumorale. "
+               "Recommandé si les souris proviennent de groupes ou scanners différents, ou quand "
+               "les patterns d'habitats relatifs priment sur les niveaux de signal absolus.",
+        "es": "Cada ratón se normaliza por su propia mediana/IQR tumoral antes del agrupamiento. "
+               "Elimina los desplazamientos de señal inter-ratón preservando la estructura intra-tumoral. "
+               "Recomendado cuando los ratones provienen de diferentes grupos o escáneres."},
     "norm_cl_jt_radio"  : {"en": "CL normalization  —  0 = contralateral tissue",
                            "fr": "Normalisation CL  —  0 = tissu controlatéral",
                            "es": "Normalización CL  —  0 = tejido contralateral"},
@@ -884,6 +1041,23 @@ _TR = {
         "es": "Centra cada parámetro en la mediana CL (0 = tejido sano), pero escala por el "
                "IQR intra-tumoral — no el estrecho IQR CL. Evita la explosión de valores por "
                "ROI CL pequeña manteniendo el cero biológico. Requiere una ROI contralateral."},
+    "norm_cl_global_jt_radio": {
+        "en": "CL-global  —  CL centering (per-mouse) + global-IQR scale  (experimental)",
+        "fr": "CL-global  —  centrage CL (par souris) + échelle IQR globale  (expérimental)",
+        "es": "CL-global  —  centrado CL (por ratón) + escala IQR global  (experimental)"},
+    "norm_cl_global_jt_hint": {
+        "en": "Centers each parameter on the per-mouse CL median (stable biological zero), then "
+               "scales by the IQR computed on ALL pooled CL-centered voxels. Combines the absolute "
+               "biological anchor of CL normalization with a cohort-consistent scale that does not "
+               "depend on individual tumor composition. Requires a contralateral ROI.",
+        "fr": "Centre chaque paramètre sur la médiane CL par souris (zéro biologique stable), puis "
+               "normalise par l'IQR calculé sur TOUS les voxels CL-centrés poolés. Combine l'ancrage "
+               "biologique absolu de la normalisation CL avec une échelle cohort-consistante indépendante "
+               "de la composition tumorale individuelle. Nécessite une ROI controlatérale.",
+        "es": "Centra cada parámetro en la mediana CL por ratón (cero biológico estable), luego "
+               "escala por el IQR calculado sobre TODOS los vóxeles CL-centrados agrupados. Combina "
+               "el ancla biológica absoluta de la normalización CL con una escala cohort-consistente "
+               "independiente de la composición tumoral individual. Requiere una ROI contralateral."},
     "srsc_unavailable"  : {
         "en": "SRSC is not available for joint clustering (spatial coordinates are per-mouse "
                "and cannot be pooled across animals).",
@@ -1026,6 +1200,160 @@ _TR = {
     "wintitle_disc_results" : {"en": "Discovery Results",
                                "fr": "Résultats de la Découverte",
                                "es": "Resultados del Descubrimiento"},
+
+    # ── d_topo warning popup ─────────────────────────────────────────────────
+    "dtopo_warn_title" : {"en": "⚠  d_topo — Dilution risk",
+                          "fr": "⚠  d_topo — Risque de dilution",
+                          "es": "⚠  d_topo — Riesgo de dilución"},
+    "dtopo_warn_body"  : {
+        "en": ("d_topo_norm is calculated from the necrotic core of each mouse.\n\n"
+               "If few mice have detectable necrosis, most voxels receive d_topo = 0 "
+               "in the pooled dataset. This column of zeros adds no discrimination and "
+               "dilutes the 6 real MRI features, degrading clustering quality.\n\n"
+               "Recommendation: keep the weight at 0.00 (disabled) unless the majority "
+               "of the cohort shows confirmed necrosis."),
+        "fr": ("d_topo_norm est calculé à partir du noyau nécrotique de chaque souris.\n\n"
+               "Si peu de souris ont une nécrose détectable, la majorité des voxels reçoivent "
+               "d_topo = 0 dans le dataset poolé. Cette colonne de zéros n'apporte aucune "
+               "discrimination et dilue les 6 features MRI réelles, dégradant la qualité "
+               "du clustering.\n\n"
+               "Recommandation : garder le poids à 0.00 (désactivé) sauf si la majorité "
+               "de la cohorte présente une nécrose confirmée."),
+        "es": ("d_topo_norm se calcula a partir del núcleo necrótico de cada ratón.\n\n"
+               "Si pocos ratones tienen necrosis detectable, la mayoría de los vóxeles reciben "
+               "d_topo = 0 en el conjunto de datos agrupado. Esta columna de ceros no aporta "
+               "discriminación y diluye las 6 características reales de MRI, degradando la "
+               "calidad del clustering.\n\n"
+               "Recomendación: mantener el peso en 0.00 (desactivado) salvo que la mayoría "
+               "de la cohorte presente necrosis confirmada.")},
+
+    # ── d_topo help window content ───────────────────────────────────────────
+    "dtopo_help_main_title"   : {"en": "d_topo spatial feature",
+                                  "fr": "Caractéristique spatiale d_topo",
+                                  "es": "Característica espacial d_topo"},
+    "dtopo_help_what_title"   : {"en": "What is it?",
+                                  "fr": "Qu'est-ce que c'est ?",
+                                  "es": "¿Qué es?"},
+    "dtopo_help_what_body"    : {
+        "en": ("d_topo_norm is a spatial feature computed in Pass 2 of the joint pipeline. "
+               "It measures the topological distance of each voxel from the necrotic core "
+               "(identified in Pass 1), then normalises that distance per mouse using the "
+               "median and IQR of the distance distribution.\n\n"
+               "Low d_topo_norm ≈ spatially close to necrosis.\n"
+               "High d_topo_norm ≈ spatially far (tumour periphery)."),
+        "fr": ("d_topo_norm est une feature spatiale calculée au Passage 2 du pipeline joint. "
+               "Elle mesure la distance topologique de chaque voxel par rapport au noyau "
+               "nécrotique (identifié au Passage 1), puis normalise cette distance par souris "
+               "en utilisant la médiane et l'IQR de la distribution des distances.\n\n"
+               "d_topo_norm faible ≈ spatialement proche de la nécrose.\n"
+               "d_topo_norm élevé ≈ spatialement loin (périphérie tumorale)."),
+        "es": ("d_topo_norm es una característica espacial calculada en el Paso 2 del pipeline "
+               "conjunto. Mide la distancia topológica de cada vóxel desde el núcleo necrótico "
+               "(identificado en el Paso 1), luego normaliza esa distancia por ratón usando "
+               "la mediana y el IQR de la distribución de distancias.\n\n"
+               "d_topo_norm bajo ≈ espacialmente cerca de la necrosis.\n"
+               "d_topo_norm alto ≈ espacialmente lejos (periferia tumoral).")},
+    "dtopo_help_why_title"    : {"en": "Why can it cause problems?",
+                                  "fr": "Pourquoi peut-il poser des problèmes ?",
+                                  "es": "¿Por qué puede causar problemas?"},
+    "dtopo_help_why_body"     : {
+        "en": ("In mice with little or no necrosis, voxels are still assigned a d_topo value. "
+               "Because the feature is scaled per mouse, it becomes noisy and can pull voxels "
+               "into the 'necrosis' habitat based on their map position rather than their "
+               "MRI tissue values — especially when d_topo weight = 1.0 (equal to MRI features)."),
+        "fr": ("Chez les souris avec peu ou pas de nécrose, les voxels reçoivent quand même "
+               "une valeur d_topo. Comme la feature est normalisée par souris, elle devient "
+               "bruitée et peut attirer des voxels vers l'habitat 'nécrose' en fonction de "
+               "leur position spatiale plutôt que de leurs valeurs IRM — surtout quand le "
+               "poids d_topo = 1.0 (égal aux features IRM)."),
+        "es": ("En ratones con poca o ninguna necrosis, los vóxeles aún reciben un valor "
+               "d_topo. Dado que la característica se escala por ratón, se vuelve ruidosa y "
+               "puede atraer vóxeles hacia el hábitat de 'necrosis' en función de su posición "
+               "en el mapa en lugar de sus valores tisulares de MRI, especialmente cuando el "
+               "peso d_topo = 1.0 (igual a las características de MRI).")},
+    "dtopo_help_weight_title" : {"en": "Weight  (0 = off, 1 = equal to MRI features)",
+                                  "fr": "Poids  (0 = désactivé, 1 = égal aux features IRM)",
+                                  "es": "Peso  (0 = desactivado, 1 = igual a características MRI)"},
+    "dtopo_help_weight_body"  : {
+        "en": ("Controls how much d_topo influences cluster assignment relative to MRI features.\n\n"
+               "• 1.0 — d_topo has equal influence to DTI-AD, DTI-FA, MTR, etc.\n"
+               "• 0.3 — d_topo acts as a tiebreaker; MRI tissue values dominate.\n"
+               "• 0.0 — d_topo is completely ignored (same as not computing it).\n\n"
+               "Recommended: 0.3.  Increase only if you specifically want spatial "
+               "anatomy to drive habitat boundaries."),
+        "fr": ("Contrôle l'influence de d_topo sur l'assignation des clusters par rapport "
+               "aux features IRM.\n\n"
+               "• 1.0 — d_topo a la même influence que DTI-AD, DTI-FA, MTR, etc.\n"
+               "• 0.3 — d_topo agit comme facteur de départage ; les valeurs IRM dominent.\n"
+               "• 0.0 — d_topo est complètement ignoré (équivalent à ne pas le calculer).\n\n"
+               "Recommandé : 0.3.  Augmenter seulement si vous voulez que l'anatomie "
+               "spatiale guide les frontières des habitats."),
+        "es": ("Controla cuánto influye d_topo en la asignación de clusters en relación con "
+               "las características de MRI.\n\n"
+               "• 1.0 — d_topo tiene igual influencia que DTI-AD, DTI-FA, MTR, etc.\n"
+               "• 0.3 — d_topo actúa como desempate; los valores tisulares de MRI dominan.\n"
+               "• 0.0 — d_topo se ignora completamente (equivale a no calcularlo).\n\n"
+               "Recomendado: 0.3.  Aumentar solo si desea que la anatomía espacial "
+               "guíe los límites de hábitat.")},
+    "dtopo_help_minfrac_title": {"en": "Min necrosis fraction  (%)",
+                                  "fr": "Fraction minimale de nécrose  (%)",
+                                  "es": "Fracción mínima de necrosis  (%)"},
+    "dtopo_help_minfrac_body" : {
+        "en": ("Per-mouse safety guard. A mouse must have at least this percentage of its "
+               "voxels assigned to the necrosis cluster (Pass 1) for d_topo to be activated "
+               "for that mouse. If the fraction is below the threshold, d_topo is set to 0 "
+               "for that mouse — voxel assignment uses MRI features only.\n\n"
+               "• 5% (default) — excludes mice with very little or no necrosis.\n"
+               "• 10% — stricter; only mice with clearly established necrosis use d_topo.\n"
+               "• 1% — very permissive; almost every mouse will use d_topo.\n\n"
+               "After running, open the 'ℹ d_topo impact' tab in the results window "
+               "to see the per-mouse decision table."),
+        "fr": ("Garde-fou par souris. Une souris doit avoir au moins ce pourcentage de ses "
+               "voxels assignés au cluster nécrotique (Passage 1) pour que d_topo soit activé "
+               "pour cette souris. Si la fraction est sous le seuil, d_topo est mis à 0 pour "
+               "cette souris — l'assignation des voxels utilise uniquement les features IRM.\n\n"
+               "• 5% (défaut) — exclut les souris avec très peu ou pas de nécrose.\n"
+               "• 10% — plus strict ; seules les souris avec une nécrose clairement établie "
+               "utilisent d_topo.\n"
+               "• 1% — très permissif ; presque toutes les souris utiliseront d_topo.\n\n"
+               "Après l'exécution, ouvrez l'onglet 'ℹ impact d_topo' dans la fenêtre de "
+               "résultats pour voir le tableau de décision par souris."),
+        "es": ("Protección por ratón. Un ratón debe tener al menos este porcentaje de sus "
+               "vóxeles asignados al cluster necrótico (Paso 1) para que d_topo se active. "
+               "Si la fracción está por debajo del umbral, d_topo se establece en 0 "
+               "para ese ratón — la asignación usa solo características de MRI.\n\n"
+               "• 5% (predeterminado) — excluye ratones con muy poca o ninguna necrosis.\n"
+               "• 10% — más estricto; solo los ratones con necrosis claramente establecida "
+               "usan d_topo.\n"
+               "• 1% — muy permisivo; casi todos los ratones usarán d_topo.\n\n"
+               "Después de ejecutar, abra la pestaña 'ℹ impacto d_topo' en la ventana de "
+               "resultados para ver la tabla de decisiones por ratón.")},
+
+    # ── Validation messages (hardcoded before) ───────────────────────────────
+    "err_no_csv_one_mouse"  : {"en": "Select CSV files for at least one mouse.",
+                                "fr": "Sélectionnez des fichiers CSV pour au moins une souris.",
+                                "es": "Seleccione archivos CSV para al menos un ratón."},
+    "err_min_mice_csv"      : {"en": "Select CSV files for at least 2 mice.",
+                                "fr": "Sélectionnez des fichiers CSV pour au moins 2 souris.",
+                                "es": "Seleccione archivos CSV para al menos 2 ratones."},
+    "err_min_groups"        : {"en": "Assign mice to at least 2 different groups.",
+                                "fr": "Assignez les souris à au moins 2 groupes différents.",
+                                "es": "Asigne los ratones a al menos 2 grupos diferentes."},
+
+    # ── Output directory confirmation dialog ─────────────────────────────────
+    "confirm_output_title"  : {"en": "Output not configured",
+                                "fr": "Sortie non configurée",
+                                "es": "Salida no configurada"},
+    "confirm_output_no_dir" : {"en": "• No output location selected",
+                                "fr": "• Aucun dossier de destination sélectionné",
+                                "es": "• No se ha seleccionado una ubicación de salida"},
+    "confirm_output_no_name": {"en": "• No folder name specified",
+                                "fr": "• Aucun nom de dossier spécifié",
+                                "es": "• No se ha especificado nombre de carpeta"},
+    "confirm_output_msg"    : {
+        "en": "Results will be saved to:\n{path}\n\nProceed with this default?",
+        "fr": "Les résultats seront enregistrés dans :\n{path}\n\nContinuer avec ce chemin par défaut ?",
+        "es": "Los resultados se guardarán en:\n{path}\n\n¿Continuar con este valor predeterminado?"},
 }
 
 # ---------------------------------------------------------------------------

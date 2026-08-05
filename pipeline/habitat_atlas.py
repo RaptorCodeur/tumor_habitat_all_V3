@@ -50,11 +50,12 @@ def _balanced_sample(features: np.ndarray, mouse_ids: np.ndarray,
 
 def _fit_gmm(features: np.ndarray, mouse_ids: np.ndarray,
              k: int, n_init: int, seed: int) -> GaussianMixture:
-    bal = _balanced_sample(features, mouse_ids, seed)
+    bal = _balanced_sample(features, mouse_ids, seed).astype(np.float64)
     gmm = GaussianMixture(
         n_components=k,
         n_init=n_init,
         covariance_type="full",
+        reg_covar=1e-4,   # regularise covariance to avoid singular matrices
         random_state=seed,
         max_iter=500,
     )
@@ -163,19 +164,32 @@ def select_atlas_k(features: np.ndarray, mouse_ids: np.ndarray,
     log(f"  Atlas K selection  K={k_list}  ({VOXELS_PER_MOUSE} vox/mouse)")
     log("  Criteria: BIC-elbow · ICL-min · Silhouette-elbow")
 
+    valid_ks = []
     for k in k_list:
-        gmm  = _fit_gmm(features, mouse_ids, k, n_init, seed)
-        bic  = gmm.bic(features)
-        icl  = _icl(gmm, features)
-        labs = gmm.predict(features)
+        try:
+            gmm = _fit_gmm(features, mouse_ids, k, n_init, seed)
+        except ValueError as exc:
+            log(f"    K={k}  SKIPPED — GMM fit failed ({exc})")
+            continue
+        feat64 = features.astype(np.float64)
+        bic  = gmm.bic(feat64)
+        icl  = _icl(gmm, feat64)
+        labs = gmm.predict(feat64)
         sil  = (silhouette_score(features, labs)
                 if len(np.unique(labs)) > 1 else 0.0)
 
+        valid_ks.append(k)
         bic_dict[k] = bic
         bic_vals.append(bic)
         icl_vals.append(icl)
         sil_vals.append(sil)
         log(f"    K={k}  BIC={bic:.1f}  ICL={icl:.1f}  Sil={sil:.3f}")
+    k_list = valid_ks
+    if not k_list:
+        raise RuntimeError(
+            "Atlas K selection: all K values failed GMM fitting. "
+            "Try fewer features, a smaller K range, or more mice."
+        )
 
     # ── Criteria ──────────────────────────────────────────────────────────────
     # BIC elbow: find the knee on the decreasing BIC curve (negate → increasing)

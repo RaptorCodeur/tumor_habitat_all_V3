@@ -19,7 +19,7 @@ from sklearn.mixture import GaussianMixture
 from pipeline.joint_loading  import load_joint_dataset
 from pipeline.selection      import select_optimal_k
 from pipeline.clustering     import run_clustering
-from pipeline.export         import export_results, save_centroids_json
+from pipeline.export         import export_results, save_centroids_json, generate_probmap_pdf
 from pipeline.labeling       import show_habitat_map
 from pipeline.spatial        import _necrosis_guard, _compute_dtopo
 from pipeline.habitat_atlas  import _balanced_sample, VOXELS_PER_MOUSE
@@ -31,22 +31,31 @@ from config                  import (N_JOBS_GAP, HABITAT_COLORS_HEX,
                                       RANDOM_SEED)
 
 _NORM_YLABEL = {
-    'cl'           : 'CL-normalized value  (0 = contralateral tissue)',
-    'cl_hybrid'    : 'CL-hybrid value  (0 = contralateral tissue, unit = tumor IQR)',
-    'robust'       : "Robust-scaled value  (0 = each mouse's tumor median)",
-    'robust_global': 'Global robust-scaled value  (0 = global tumor median)',
+    'cl'            : 'CL-normalized value  (0 = contralateral tissue)',
+    'cl_hybrid'     : 'CL-hybrid value  (0 = contralateral tissue, unit = tumor IQR)',
+    'cl_global'     : 'CL-global value  (0 = contralateral tissue, unit = global tumor IQR)',
+    'robust'        : "Robust-scaled value  (0 = each mouse's tumor median)",
+    'robust_global' : 'Global robust-scaled value  (0 = global tumor median)',
+    'robust_cohort' : 'Cohort-median value  (0 = grand median of per-mouse medians)',
+    'robust_recal'  : 'Recalibrated value  (0 = grand median; unit = per-mouse IQR)',
 }
 _NORM_REFLABEL = {
-    'cl'           : 'Contralateral reference (0)',
-    'cl_hybrid'    : 'Contralateral reference (0)',
-    'robust'       : 'Per-mouse tumor median (0)',
-    'robust_global': 'Global tumor median (0)',
+    'cl'            : 'Contralateral reference (0)',
+    'cl_hybrid'     : 'Contralateral reference (0)',
+    'cl_global'     : 'Contralateral reference (0)',
+    'robust'        : 'Per-mouse tumor median (0)',
+    'robust_global' : 'Global tumor median (0)',
+    'robust_cohort' : 'Grand median of per-mouse medians (0)',
+    'robust_recal'  : 'Grand median of per-mouse medians (0)',
 }
 _NORM_TAG = {
-    'cl'           : 'CL-normalized',
-    'cl_hybrid'    : 'CL-hybrid',
-    'robust'       : 'per-mouse robust',
-    'robust_global': 'global robust',
+    'cl'            : 'CL-normalized',
+    'cl_hybrid'     : 'CL-hybrid',
+    'cl_global'     : 'CL-global',
+    'robust'        : 'per-mouse robust',
+    'robust_global' : 'global robust',
+    'robust_cohort' : 'cohort-median',
+    'robust_recal'  : 'recalibrated',
 }
 
 
@@ -199,7 +208,8 @@ def _plot_all_slices(df_mouse, labels_mouse, best_k, mouse_name, output_dir,
 
 def generate_joint_report_pdf(df_pooled, common_params, mice_list,
                                centroids, best_k, normalization,
-                               method, output_dir, log_fn=print):
+                               method, output_dir, log_fn=print,
+                               norm_check=None):
     """
     Multi-page PDF report for joint clustering results.
     Pages: title, global summary, global profile chart,
@@ -285,6 +295,44 @@ def generate_joint_report_pdf(df_pooled, common_params, mice_list,
                 ha='center', fontsize=10, color='#666666', transform=T)
         ax.text(0.5, 0.18, datetime.datetime.now().strftime('%B %d, %Y'),
                 ha='center', fontsize=12, color='#888888', transform=T)
+
+        # Normalization consistency indicator
+        if norm_check is not None:
+            sev   = norm_check["severity"]
+            score = norm_check["score"]
+            worst = norm_check["worst_param"]
+            max_s = norm_check["max_std"]
+            intentional = norm_check.get("intentional_spread", False)
+            _sev_color = {"ok": "#27AE60", "caution": "#E67E22", "warning": "#C0392B"}
+            _sev_icon  = {"ok": "✓", "caution": "⚠", "warning": "⚠⚠"}
+            color = _sev_color[sev]
+            icon  = _sev_icon[sev]
+            if intentional:
+                norm_label = norm_check.get("normalization", "")
+                warn_text = (
+                    f"✓  Inter-mouse biological variability preserved  "
+                    f"(spread = {score:.3f} IQR units, worst: {worst} ±{max_s:.3f})\n"
+                    f"'{norm_label}' centers on cohort median — tumors keep their biological positions.\n"
+                    f"High spread = heterogeneous cohort (expected, not a defect)."
+                )
+                color = "#27AE60"
+            elif sev == "ok":
+                warn_text = (f"{icon}  Normalization consistent across mice  "
+                             f"(mean inter-mouse spread = {score:.3f} IQR units)")
+            else:
+                warn_text = (
+                    f"{icon}  Normalization consistency — {sev.upper()}\n"
+                    f"Mean inter-mouse spread = {score:.3f} IQR units  "
+                    f"(worst: {worst} ±{max_s:.3f})\n"
+                    f"Per-mouse robust z-score may produce composition-biased habitats.\n"
+                    f"Consider Discovery (pools local prototypes, avoids this bias)."
+                )
+            ax.text(0.5, 0.11, warn_text, ha='center', va='center',
+                    fontsize=9 if sev == "ok" else 9,
+                    color=color, transform=T,
+                    bbox=dict(boxstyle='round,pad=0.4', facecolor='#FAFAFA',
+                              edgecolor=color, linewidth=1.5) if sev != "ok" else None)
+
         _header(ax)
         pdf.savefig(fig)
         plt.close(fig)
@@ -533,6 +581,94 @@ def _compute_joint_dtopo(df_pooled, labels, centroids, common_params,
 
 
 # ------------------------------------------------------------------
+# Normalization consistency check
+# ------------------------------------------------------------------
+
+def _check_normalization_consistency(features, mouse_ids, common_params,
+                                      normalization='robust', log_fn=print):
+    """
+    Compute inter-mouse spread of per-mouse feature means.
+
+    After per-mouse normalization, each mouse's mean voxel should sit at a
+    similar location in feature space if tumor compositions are comparable.
+    High spread means the normalization origin varies by composition → the
+    same tissue type gets different values in different mice.
+
+    Returns dict: {severity, score, max_std, worst_param, per_param_std}
+    """
+    mri_idx    = [i for i, p in enumerate(common_params) if p != 'd_topo_norm']
+    mri_params = [common_params[i] for i in mri_idx]
+    n_mice     = int(mouse_ids.max()) + 1
+
+    per_mouse_means = []
+    for m in range(n_mice):
+        mask = mouse_ids == m
+        if mask.sum() == 0:
+            continue
+        per_mouse_means.append(features[mask, :][:, mri_idx].mean(axis=0))
+
+    mat       = np.array(per_mouse_means)       # (n_mice, n_params)
+    inter_std = mat.std(axis=0, ddof=0)         # (n_params,)
+    score     = float(inter_std.mean())
+    max_std   = float(inter_std.max())
+    worst_idx = int(inter_std.argmax())
+    worst_p   = mri_params[worst_idx]
+
+    per_param = {p: float(inter_std[j]) for j, p in enumerate(mri_params)}
+
+    # robust_recal / robust_cohort intentionally preserve inter-mouse biological
+    # spread; high inter-mouse std is the signal, not a defect.
+    intentional_spread = normalization in ('robust_recal', 'robust_cohort')
+
+    if intentional_spread:
+        severity = "ok"
+    elif score < 0.25:
+        severity = "ok"
+    elif score < 0.50:
+        severity = "caution"
+    else:
+        severity = "warning"
+
+    log_fn("[Joint] Normalization consistency check:")
+    log_fn(f"  Mean inter-mouse spread : {score:.3f} IQR units")
+    for p, v in per_param.items():
+        log_fn(f"    {p:20s}: ±{v:.3f}")
+
+    if intentional_spread:
+        log_fn(f"  ✓  Inter-mouse biological variability preserved "
+               f"(spread={score:.3f} IQR units, worst: {worst_p} ±{max_std:.3f}).")
+        log_fn(f"  ✓  This is the expected behavior for '{normalization}': "
+               f"tumors remain at their biological positions relative to the cohort median.")
+        log_fn("  ✓  High spread = biologically diverse cohort — not a normalization defect.")
+    elif severity == "ok":
+        log_fn("  → Normalization consistent across mice.")
+    elif severity == "caution":
+        log_fn(f"  ⚠  MODERATE inter-mouse variability "
+               f"(mean={score:.3f}, worst: {worst_p} ±{max_std:.3f}).")
+        log_fn("  ⚠  Tumor compositions may differ — interpret Joint habitats with caution.")
+        if normalization == 'robust':
+            log_fn("  ⚠  Per-mouse robust z-score uses each tumor as its own reference.")
+            log_fn("  ⚠  Consider Discovery (pools local prototypes, avoids this bias).")
+    else:
+        log_fn(f"  ⚠⚠ HIGH inter-mouse variability "
+               f"(mean={score:.3f}, worst: {worst_p} ±{max_std:.3f}).")
+        log_fn("  ⚠⚠ Per-mouse normalization origins differ significantly across mice.")
+        log_fn("  ⚠⚠ Joint clustering likely produces composition-biased habitats.")
+        log_fn("  ⚠⚠ → Use Discovery instead, or provide an external reference.")
+
+    return {
+        "severity"          : severity,
+        "score"             : score,
+        "max_std"           : max_std,
+        "worst_param"       : worst_p,
+        "per_param_std"     : per_param,
+        "normalization"     : normalization,
+        "n_mice"            : n_mice,
+        "intentional_spread": intentional_spread,
+    }
+
+
+# ------------------------------------------------------------------
 # Balanced GMM helpers for per-mouse weighting
 # ------------------------------------------------------------------
 
@@ -607,6 +743,10 @@ def run_joint_pipeline(mice_list, method, k_range, n_init_gmm, n_refs,
     n_total   = len(features)
     mouse_ids = df_pooled['mouse_id'].values.astype(int)
     log_fn(f"Feature matrix: {n_total} voxels × {len(common_params)} params")
+
+    # Normalization consistency check — warn early if inter-mouse spread is high
+    norm_check = _check_normalization_consistency(
+        features, mouse_ids, common_params, normalization, log_fn)
 
     # Per-mouse weighting: 1/n_i per voxel so each mouse contributes equally
     if use_mouse_weighting:
@@ -701,7 +841,9 @@ def run_joint_pipeline(mice_list, method, k_range, n_init_gmm, n_refs,
     dtopo_arr, dtopo_report = _compute_joint_dtopo(
         df_pooled, labels, centroids, common_params,
         min_necrosis_fraction=dtopo_min_frac, log_fn=log_fn)
-    if dtopo_arr is not None:
+    if dtopo_arr is not None and dtopo_weight == 0:
+        log_fn("[d_topo] weight=0 — Pass 2 skipped (d_topo_norm excluded from features)")
+    if dtopo_arr is not None and dtopo_weight > 0:
         log_fn(f"Pass 2: re-running clustering with d_topo_norm "
                f"(weight={dtopo_weight})…")
         df_pooled['d_topo_norm'] = dtopo_arr * dtopo_weight
@@ -752,6 +894,7 @@ def run_joint_pipeline(mice_list, method, k_range, n_init_gmm, n_refs,
         'dtopo_report'  : dtopo_report,
         'dtopo_weight'  : dtopo_weight,
         'dtopo_min_frac': dtopo_min_frac,
+        'norm_check'   : norm_check,
     }
 
 
@@ -760,7 +903,8 @@ def run_joint_pipeline(mice_list, method, k_range, n_init_gmm, n_refs,
 # ------------------------------------------------------------------
 
 def export_per_mouse(df_pooled, common_params, mice_list,
-                     output_dir, best_k, normalization='cl', log_fn=print):
+                     output_dir, best_k, normalization='cl', log_fn=print,
+                     norm_check=None, proba=None):
     habitat_labels = {c: f"H{c}" for c in range(best_k)}
     features       = np.nan_to_num(df_pooled[common_params].values, nan=0.0)
     labels         = df_pooled['Habitat'].values.astype(int)
@@ -794,6 +938,12 @@ def export_per_mouse(df_pooled, common_params, mice_list,
                          best_k, output_dir=mouse_dir)
         _plot_all_slices(df_mouse, lbs_m, best_k, name, mouse_dir, conf_m)
 
+        if proba is not None:
+            try:
+                generate_probmap_pdf(df_mouse, common_params, proba[mask], mouse_dir)
+            except Exception as _e:
+                log_fn(f"[{name}] Prob-map skipped: {_e}")
+
         n_vox = int(mask.sum())
         log_fn(f"[{name}] {n_vox} voxels → {mouse_dir}")
 
@@ -801,4 +951,5 @@ def export_per_mouse(df_pooled, common_params, mice_list,
         df_pooled, common_params, mice_list,
         centroids, best_k, normalization,
         method='joint', output_dir=output_dir, log_fn=log_fn,
+        norm_check=norm_check,
     )

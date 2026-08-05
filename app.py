@@ -1,4 +1,4 @@
-# =================================================================
+﻿# =================================================================
 # app.py — Graphical interface for Tumor Habitat Segmentation V2
 #
 # Thread safety rules:
@@ -38,7 +38,7 @@ from pipeline.spatial import (
     mrf_boundary_smooth, hierarchical_segment,
     inject_dtopo_centroids, compute_zone_dtopo, compute_necrotic_dtopo,
 )
-from pipeline.loading    import load_data, robust_scale, hybrid_scale, load_cl_stats, resolve_dti_parameters
+from pipeline.loading    import load_data, robust_scale, hybrid_scale, load_cl_stats, resolve_dti_parameters, save_scaling_info
 from pipeline.selection  import select_optimal_k
 from pipeline.clustering import run_clustering, run_clustering_with_size_guard
 from pipeline.labeling   import show_habitat_map, _label_dialog
@@ -58,11 +58,13 @@ from multi_mouse_discovery import (
     find_common_parameters, build_centroid_matrix,
     find_optimal_meta_k, run_meta_clustering,
     compute_meta_stats, generate_pdf as _disc_generate_pdf,
+    compute_cosine_similarity, apply_directional_merge,
     fig_k_selection, fig_pca_scatter, fig_profiles_heatmap,
     fig_meta_profiles_bar, fig_crosstab,
     fig_mouse_index, fig_summary_table,
     fig_radar_per_mh, fig_radar_combined,
-    fig_segmentation_maps,
+    fig_segmentation_maps, fig_cosine_heatmap,
+    run_sub_clustering, generate_subclust_pdf,
     SIZE_FLOOR as _DISC_SIZE_FLOOR,
 )
 
@@ -293,6 +295,11 @@ def _show_method_help(method_key):
                command=win.destroy).pack(pady=12)
 
 
+def _show_dtopo_necrosis_warning():
+    """Warning popup: d_topo dilutes information when tumors are not necrotic."""
+    messagebox.showwarning(t("dtopo_warn_title"), t("dtopo_warn_body"))
+
+
 def _show_dtopo_help_window():
     """Standalone popup explaining d_topo weight and min-fraction parameters."""
     win = tk.Toplevel()
@@ -324,43 +331,15 @@ def _show_dtopo_help_window():
                  fg=THEME["text_sub"], bg=THEME["bg"]
                  ).pack(anchor='w', padx=24, pady=(0, 6))
 
-    tk.Label(frame, text="d_topo spatial feature",
+    tk.Label(frame, text=t("dtopo_help_main_title"),
              font=(THEME["font_family"], 12, "bold"),
              fg=THEME["text"], bg=THEME["bg"]
              ).pack(anchor='w', padx=16, pady=(16, 4))
 
-    section("What is it?",
-            "d_topo_norm is a spatial feature computed in Pass 2 of the joint pipeline. "
-            "It measures the topological distance of each voxel from the necrotic core "
-            "(identified in Pass 1), then normalises that distance per mouse using the "
-            "median and IQR of the distance distribution.\n\n"
-            "Low d_topo_norm ≈ spatially close to necrosis.\n"
-            "High d_topo_norm ≈ spatially far (tumour periphery).")
-
-    section("Why can it cause problems?",
-            "In mice with little or no necrosis, voxels are still assigned a d_topo value. "
-            "Because the feature is scaled per mouse, it becomes noisy and can pull voxels "
-            "into the 'necrosis' habitat based on their map position rather than their "
-            "MRI tissue values — especially when d_topo weight = 1.0 (equal to MRI features).")
-
-    section("Weight  (0 = off, 1 = equal to MRI features)",
-            "Controls how much d_topo influences cluster assignment relative to MRI features.\n\n"
-            "• 1.0 — d_topo has equal influence to DTI-AD, DTI-FA, MTR, etc.\n"
-            "• 0.3 — d_topo acts as a tiebreaker; MRI tissue values dominate.\n"
-            "• 0.0 — d_topo is completely ignored (same as not computing it).\n\n"
-            "Recommended: 0.3.  Increase only if you specifically want spatial "
-            "anatomy to drive habitat boundaries.")
-
-    section("Min necrosis fraction  (%)",
-            "Per-mouse safety guard. A mouse must have at least this percentage of its "
-            "voxels assigned to the necrosis cluster (Pass 1) for d_topo to be activated "
-            "for that mouse. If the fraction is below the threshold, d_topo is set to 0 "
-            "for that mouse — voxel assignment uses MRI features only.\n\n"
-            "• 5% (default) — excludes mice with very little or no necrosis.\n"
-            "• 10% — stricter; only mice with clearly established necrosis use d_topo.\n"
-            "• 1% — very permissive; almost every mouse will use d_topo.\n\n"
-            "After running, open the 'ℹ d_topo impact' tab in the results window "
-            "to see the per-mouse decision table.")
+    section(t("dtopo_help_what_title"),   t("dtopo_help_what_body"))
+    section(t("dtopo_help_why_title"),    t("dtopo_help_why_body"))
+    section(t("dtopo_help_weight_title"), t("dtopo_help_weight_body"))
+    section(t("dtopo_help_minfrac_title"), t("dtopo_help_minfrac_body"))
 
     ttk.Button(frame, text=t("close"),
                style="Secondary.TButton",
@@ -512,13 +491,21 @@ class HabitatApp(tk.Tk):
         self._im_lst_csv      = None
         self.btn_im_run       = None
 
+        # Shared animal list — Joint, Compare and Discovery all operate on this
+        self._shared_animals  = []
+
         # Discovery tab
-        self._disc_animals    = []
+        self._disc_animals    = self._shared_animals
         self._disc_list_inner = None
-        self._disc_method     = tk.StringVar(value=CLUSTERING_METHOD)
-        self._disc_k_max      = tk.IntVar(value=max(K_RANGE))
-        self._disc_n_init     = tk.IntVar(value=N_INIT_GMM)
-        self._disc_meta_k     = tk.IntVar(value=0)
+        self._disc_method      = tk.StringVar(value=CLUSTERING_METHOD)
+        self._disc_k_max       = tk.IntVar(value=max(K_RANGE))
+        self._disc_n_init      = tk.IntVar(value=N_INIT_GMM)
+        self._disc_meta_k      = tk.IntVar(value=0)
+        self._disc_merge_mode  = tk.StringVar(value="suggest")
+        self._disc_cosine_thr  = tk.DoubleVar(value=0.92)
+        self._disc_sub_enabled = tk.BooleanVar(value=True)
+        self._disc_sub_kmax    = tk.IntVar(value=4)
+        self._disc_sub_minvox  = tk.IntVar(value=200)
         self._disc_output_name     = tk.StringVar(value="discovery")
         self._disc_output_dir      = tk.StringVar(value="")
         self._disc_compare_enabled = tk.BooleanVar(value=False)
@@ -528,7 +515,7 @@ class HabitatApp(tk.Tk):
         self.btn_disc_run          = None
 
         # Joint clustering tab
-        self._jt_animals      = []
+        self._jt_animals      = self._shared_animals
         self._jt_list_inner   = None
         self._jt_method       = tk.StringVar(value='gmm')
         self._jt_k_min        = tk.IntVar(value=min(K_RANGE))
@@ -539,7 +526,7 @@ class HabitatApp(tk.Tk):
         self._jt_gmm_guard    = tk.BooleanVar(value=_gmm_default)
         self._jt_kmeans_guard = tk.BooleanVar(value=_kmeans_default)
         self._jt_normalization         = tk.StringVar(value='robust')
-        self._jt_dtopo_weight          = tk.DoubleVar(value=DTOPO_JOINT_WEIGHT)
+        self._jt_dtopo_weight          = tk.DoubleVar(value=0.0)
         self._jt_dtopo_min_frac        = tk.DoubleVar(value=DTOPO_MIN_NECROSIS_FRACTION)
         self._jt_dtopo_min_frac_pct    = tk.IntVar(value=int(round(DTOPO_MIN_NECROSIS_FRACTION * 100)))
         self._jt_output_name       = tk.StringVar(value="joint_clustering")
@@ -551,7 +538,7 @@ class HabitatApp(tk.Tk):
         self.btn_jt_run            = None
 
         # Comparative analysis tab
-        self._cmp_animals      = []
+        self._cmp_animals      = self._shared_animals
         self._cmp_list_inner   = None
         self._cmp_method       = tk.StringVar(value='gmm')
         self._cmp_k_min        = tk.IntVar(value=min(K_RANGE))
@@ -559,7 +546,8 @@ class HabitatApp(tk.Tk):
         self._cmp_k_override   = tk.StringVar(value="")
         self._cmp_n_init_gmm   = tk.IntVar(value=N_INIT_GMM)
         self._cmp_n_refs       = tk.IntVar(value=N_REFS_GAP)
-        self._cmp_normalization = tk.StringVar(value='robust_global')
+        self._cmp_normalization = tk.StringVar(value='robust')
+        self._cmp_dtopo_weight  = tk.DoubleVar(value=0.0)
         self._cmp_output_name  = tk.StringVar(value="comparative_analysis")
         self._cmp_output_dir   = tk.StringVar(value="")
         self.btn_cmp_run       = None
@@ -573,7 +561,8 @@ class HabitatApp(tk.Tk):
         self._atl_n_init       = tk.IntVar(value=20)
         self._atl_n_bootstrap  = tk.IntVar(value=30)
         self._atl_n_perm       = tk.IntVar(value=999)
-        self._atl_normalization = tk.StringVar(value='robust_global')
+        self._atl_normalization = tk.StringVar(value='robust_recal')
+        self._atl_dtopo_weight  = tk.DoubleVar(value=0.0)
         self._atl_output_name  = tk.StringVar(value="atlas_comparison")
         self._atl_output_dir   = tk.StringVar(value="")
         self._atl_group_names  = [tk.StringVar(value="Control"),
@@ -934,6 +923,11 @@ class HabitatApp(tk.Tk):
         self.bind_all("<Prior>", _on_arrow)
         self.bind_all("<Next>",  _on_arrow)
 
+        # Neutralise the built-in TSpinbox <MouseWheel> class binding so the
+        # wheel never silently changes a spinbox value. The event still propagates
+        # to the bind_all level above, so canvas scrolling keeps working normally.
+        self.tk.eval("bind TSpinbox <MouseWheel> {}")
+
     # ------------------------------------------------------------------
     # Clustering tab  (Files + Method + Output réunis)
     # ------------------------------------------------------------------
@@ -961,7 +955,7 @@ class HabitatApp(tk.Tk):
         f1.pack(fill='x', padx=px)
         self.lbl_csv = ttk.Label(f1, text=t("no_file"), style="Sub.TLabel")
         self.lbl_csv.pack(side='left', fill='x', expand=True)
-        ttk.Button(f1, text="📁", style="Secondary.TButton", width=3,
+        ttk.Button(f1, text="ðŸ“", style="Secondary.TButton", width=3,
                    command=self._select_csv_folder).pack(side='right', padx=(0, 2))
         ttk.Button(f1, text=t("browse"), style="Secondary.TButton",
                    command=self._select_csv).pack(side='right')
@@ -1088,9 +1082,14 @@ class HabitatApp(tk.Tk):
             ttk.Radiobutton(inner, text=t(_key),
                             variable=self.norm_mode, value=_val,
                             ).pack(anchor='w', padx=px + 4, pady=1)
-        ttk.Label(inner, text=t("norm_hybrid_hint"),
-                  style="Sub.TLabel", wraplength=460,
-                  ).pack(anchor='w', padx=px + 22, pady=(0, 4))
+        _cl_norm_hint = ttk.Label(inner, text="", style="Sub.TLabel", wraplength=460)
+        _cl_norm_hint.pack(anchor='w', padx=px + 22, pady=(0, 4))
+        _cl_norm_keys = {'robust': "norm_robust_hint", 'hybrid': "norm_hybrid_hint"}
+        def _cl_norm_update(*_, _lbl=_cl_norm_hint, _keys=_cl_norm_keys):
+            key = _keys.get(self.norm_mode.get(), "")
+            _lbl.config(text=t(key) if key else "")
+        self.norm_mode.trace_add('write', _cl_norm_update)
+        _cl_norm_update()
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=8)
 
@@ -1170,50 +1169,31 @@ class HabitatApp(tk.Tk):
         else:
             self._cmp_refresh_list()
 
-        ttk.Button(inner, text=t("add_mouse"), style="Secondary.TButton",
-                   command=self._cmp_add_mouse).pack(anchor='w', padx=px, pady=(0, 8))
+        _cmp_btn_row = ttk.Frame(inner)
+        _cmp_btn_row.pack(anchor='w', padx=px, pady=(0, 8))
+        ttk.Button(_cmp_btn_row, text=t("add_mouse"), style="Secondary.TButton",
+                   command=self._cmp_add_mouse).pack(side='left', padx=(0, 4))
+        ttk.Button(_cmp_btn_row, text=t("import_parent_folder"), style="Secondary.TButton",
+                   command=self._shared_import_folders).pack(side='left')
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
-        # ── Normalization (joint step only) ───────────────────────────
-        ttk.Label(inner, text=t("joint_norm_section"),
+        # -- Commun - Classic * Discovery * Joint --------------------------------
+        ttk.Label(inner, text=t("cmp_common_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
-        ttk.Radiobutton(
-            inner,
-            text=t("norm_robust_global_jt_radio"),
-            variable=self._cmp_normalization, value='robust_global'
-        ).pack(anchor='w', padx=px + 4, pady=1)
-        ttk.Radiobutton(
-            inner,
-            text=t("norm_robust_jt_radio"),
-            variable=self._cmp_normalization, value='robust'
-        ).pack(anchor='w', padx=px + 4, pady=1)
-        ttk.Radiobutton(
-            inner,
-            text=t("norm_cl_hybrid_jt_radio"),
-            variable=self._cmp_normalization, value='cl_hybrid'
-        ).pack(anchor='w', padx=px + 4, pady=1)
-        ttk.Radiobutton(
-            inner,
-            text=t("norm_cl_jt_radio"),
-            variable=self._cmp_normalization, value='cl'
-        ).pack(anchor='w', padx=px + 4, pady=(1, 6))
+        ttk.Label(inner, text=t("cmp_common_hint"),
+                  style="Sub.TLabel", wraplength=520
+                  ).pack(anchor='w', padx=px, pady=(0, 6))
 
-        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
-
-        # ── Clustering method ────────────────────────────────────────
         ttk.Label(inner, text=t("method_section"),
-                  style="Section.TLabel").pack(anchor='w', **pad)
+                  style="Sub.TLabel").pack(anchor='w', padx=px, pady=(2, 1))
         for val, key in [("gmm", "gmm_desc"), ("kmeans", "kmeans_desc")]:
             ttk.Radiobutton(inner, text=t(key),
                             variable=self._cmp_method,
                             value=val).pack(anchor='w', padx=px + 4, pady=1)
 
-        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
-
-        # ── K parameters ─────────────────────────────────────────────
         ttk.Label(inner, text=t("k_params_section"),
-                  style="Section.TLabel").pack(anchor='w', **pad)
+                  style="Sub.TLabel").pack(anchor='w', padx=px, pady=(8, 1))
 
         def crow(label, widget_fn):
             f = ttk.Frame(inner)
@@ -1243,6 +1223,49 @@ class HabitatApp(tk.Tk):
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
+        # -- Joint - parametres specifiques ---------------------------------------
+        ttk.Label(inner, text=t("cmp_joint_section"),
+                  style="Section.TLabel").pack(anchor='w', **pad)
+
+        ttk.Label(inner, text=t("joint_norm_section"),
+                  style="Sub.TLabel").pack(anchor='w', padx=px, pady=(2, 1))
+        ttk.Radiobutton(
+            inner,
+            text=t("norm_robust_recal_jt_radio"),
+            variable=self._cmp_normalization, value='robust_recal'
+        ).pack(anchor='w', padx=px + 4, pady=1)
+        ttk.Radiobutton(
+            inner,
+            text=t("norm_robust_jt_radio"),
+            variable=self._cmp_normalization, value='robust'
+        ).pack(anchor='w', padx=px + 4, pady=1)
+        _cmp_norm_hint = ttk.Label(inner, text="", style="Sub.TLabel", wraplength=500)
+        _cmp_norm_hint.pack(anchor='w', padx=px + 22, pady=(0, 6))
+        _cmp_norm_keys = {
+            'robust_recal': "norm_robust_recal_jt_hint",
+            'robust'      : "norm_robust_jt_hint",
+        }
+        def _cmp_norm_update(*_, _lbl=_cmp_norm_hint, _keys=_cmp_norm_keys):
+            key = _keys.get(self._cmp_normalization.get(), "")
+            _lbl.config(text=t(key) if key else "")
+        self._cmp_normalization.trace_add('write', _cmp_norm_update)
+        _cmp_norm_update()
+
+        hdr_cmp = ttk.Frame(inner)
+        hdr_cmp.pack(fill='x', padx=px, pady=(6, 0))
+        ttk.Label(hdr_cmp, text=t("dtopo_section"),
+                  style="Sub.TLabel").pack(side='left')
+        ttk.Button(hdr_cmp, text="⚠", width=2, style="Secondary.TButton",
+                   command=_show_dtopo_necrosis_warning).pack(side='left', padx=(8, 0))
+
+        f_cmp_dtw = ttk.Frame(inner)
+        f_cmp_dtw.pack(fill='x', padx=px, pady=3)
+        ttk.Label(f_cmp_dtw, text=t("dtopo_weight_label"), width=30).pack(side='left')
+        ttk.Spinbox(f_cmp_dtw, from_=0.0, to=1.0, increment=0.05, format="%.2f",
+                    textvariable=self._cmp_dtopo_weight, width=7).pack(side='left')
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
+
         # ── Output ───────────────────────────────────────────────────
         ttk.Label(inner, text=t("output_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
@@ -1268,14 +1291,14 @@ class HabitatApp(tk.Tk):
     # ── Comparative animal card helpers ──────────────────────────────────────
 
     def _cmp_add_mouse(self):
-        self._cmp_animals.append({"files": []})
-        self._cmp_refresh_list()
+        self._shared_animals.append({"files": [], "group_var": tk.IntVar(value=0)})
+        self._shared_refresh_all()
 
     def _cmp_remove_mouse(self, idx):
-        if len(self._cmp_animals) <= 1:
+        if len(self._shared_animals) <= 1:
             return
-        self._cmp_animals.pop(idx)
-        self._cmp_refresh_list()
+        self._shared_animals.pop(idx)
+        self._shared_refresh_all()
 
     def _cmp_refresh_list(self):
         if self._cmp_list_inner is None:
@@ -1292,17 +1315,16 @@ class HabitatApp(tk.Tk):
         ttk.Label(card, text=t("mouse_n", n=i + 1),
                   font=THEME["font_bold"], width=9).pack(side='left', padx=(4, 2))
 
-        n   = len(animal["files"])
         lbl = ttk.Label(card,
-                        text=t("n_files", n=n) if n else t("no_files"),
-                        style="Sub.TLabel", width=12)
+                        text=self._fmt_animal_label(animal),
+                        style="Sub.TLabel", width=22)
         lbl.pack(side='left', padx=6)
-        animal["_lbl"] = lbl
+        animal["_cmp_lbl"] = lbl
 
         ttk.Button(card, text=t("browse"), style="Secondary.TButton",
                    command=lambda a=animal: self._cmp_browse(a)
                    ).pack(side='left', padx=2)
-        ttk.Button(card, text="📁", style="Secondary.TButton", width=3,
+        ttk.Button(card, text="ðŸ“", style="Secondary.TButton", width=3,
                    command=lambda a=animal: self._browse_animal_folder(a)
                    ).pack(side='left', padx=2)
         ttk.Button(card, text="✕", style="Secondary.TButton", width=2,
@@ -1316,10 +1338,8 @@ class HabitatApp(tk.Tk):
             filetypes=[("CSV files", "*.csv")])
         if files:
             animal["files"] = list(files)
-            if animal.get("_lbl"):
-                animal["_lbl"].config(
-                    text=t("n_files", n=len(files)),
-                    foreground=THEME["text"])
+            animal["name"]  = os.path.basename(os.path.dirname(files[0]))
+            self._update_shared_lbl(animal)
 
     def _cmp_select_output(self):
         path = filedialog.askdirectory(title=t("dlg_select_output"))
@@ -1337,8 +1357,7 @@ class HabitatApp(tk.Tk):
             mice_list.append({"name": name, "files": list(animal["files"])})
 
         if not mice_list:
-            messagebox.showerror(t("err_title"),
-                                 "Select CSV files for at least one mouse.")
+            messagebox.showerror(t("err_title"), t("err_no_csv_one_mouse"))
             return
 
         default_dir = os.path.dirname(os.path.dirname(mice_list[0]["files"][0]))
@@ -1350,15 +1369,16 @@ class HabitatApp(tk.Tk):
             out_dir = default_dir
 
         params = {
-            "mice"      : mice_list,
-            "method"    : self._cmp_method.get(),
-            "k_range"   : range(self._cmp_k_min.get(), self._cmp_k_max.get() + 1),
-            "k_override": self._cmp_k_override.get().strip(),
-            "n_init"    : self._cmp_n_init_gmm.get(),
-            "n_refs"    : self._cmp_n_refs.get(),
-            "norm"      : self._cmp_normalization.get(),
-            "out_dir"   : out_dir,
-            "pdf_name"  : self._cmp_output_name.get() or "comparative_analysis",
+            "mice"        : mice_list,
+            "method"      : self._cmp_method.get(),
+            "k_range"     : range(self._cmp_k_min.get(), self._cmp_k_max.get() + 1),
+            "k_override"  : self._cmp_k_override.get().strip(),
+            "n_init"      : self._cmp_n_init_gmm.get(),
+            "n_refs"      : self._cmp_n_refs.get(),
+            "norm"        : self._cmp_normalization.get(),
+            "dtopo_weight": round(self._cmp_dtopo_weight.get(), 3),
+            "out_dir"     : out_dir,
+            "pdf_name"    : self._cmp_output_name.get() or "comparative_analysis",
         }
 
         self.btn_cmp_run.config(state='disabled', text=t("running"))
@@ -1372,16 +1392,17 @@ class HabitatApp(tk.Tk):
 
         try:
             result = run_comparative_pdf(
-                mice_data  = p["mice"],
-                method     = p["method"],
-                k_range    = p["k_range"],
-                k_override = p["k_override"],
-                n_init     = p["n_init"],
-                n_refs     = p["n_refs"],
-                norm       = p["norm"],
-                out_dir    = p["out_dir"],
-                pdf_name   = p["pdf_name"],
-                log        = log,
+                mice_data    = p["mice"],
+                method       = p["method"],
+                k_range      = p["k_range"],
+                k_override   = p["k_override"],
+                n_init       = p["n_init"],
+                n_refs       = p["n_refs"],
+                norm         = p["norm"],
+                dtopo_weight = p.get("dtopo_weight", 0.0),
+                out_dir      = p["out_dir"],
+                pdf_name     = p["pdf_name"],
+                log          = log,
             )
             self.queue.put({
                 "type"    : "cmp_results",
@@ -1832,8 +1853,12 @@ class HabitatApp(tk.Tk):
         else:
             self._ia_refresh_list()
 
-        ttk.Button(inner, text=t("add_mouse"), style="Secondary.TButton",
-                   command=self._ia_add_animal).pack(anchor='w', padx=px, pady=(0, 8))
+        _ia_btn_row = ttk.Frame(inner)
+        _ia_btn_row.pack(anchor='w', padx=px, pady=(0, 8))
+        ttk.Button(_ia_btn_row, text=t("add_mouse"), style="Secondary.TButton",
+                   command=self._ia_add_animal).pack(side='left', padx=(0, 4))
+        ttk.Button(_ia_btn_row, text=t("import_parent_folder"), style="Secondary.TButton",
+                   command=self._ia_import_folders).pack(side='left')
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
         ttk.Label(inner, text=t("method_section"),
@@ -1950,17 +1975,16 @@ class HabitatApp(tk.Tk):
         ttk.Label(card, text=t("mouse_n", n=i+1),
                   font=THEME["font_bold"], width=9).pack(side='left', padx=(4, 2))
 
-        n   = len(animal["files"])
         lbl = ttk.Label(card,
-                        text=t("n_files", n=n) if n else t("no_files"),
-                        style="Sub.TLabel", width=12)
+                        text=self._fmt_animal_label(animal),
+                        style="Sub.TLabel", width=22)
         lbl.pack(side='left', padx=6)
         animal["_lbl"] = lbl
 
         ttk.Button(card, text=t("browse"), style="Secondary.TButton",
                    command=lambda a=animal: self._ia_browse(a)
                    ).pack(side='left', padx=2)
-        ttk.Button(card, text="📁", style="Secondary.TButton", width=3,
+        ttk.Button(card, text="ðŸ“", style="Secondary.TButton", width=3,
                    command=lambda a=animal: self._browse_animal_folder(a)
                    ).pack(side='left', padx=2)
 
@@ -1975,9 +1999,10 @@ class HabitatApp(tk.Tk):
             filetypes=[("CSV files", "*.csv")])
         if files:
             animal["files"] = list(files)
+            animal["name"]  = os.path.basename(os.path.dirname(files[0]))
             if animal.get("_lbl"):
                 animal["_lbl"].config(
-                    text=t("n_files", n=len(files)),
+                    text=self._fmt_animal_label(animal),
                     foreground=THEME["text"])
 
     def _ia_select_output(self):
@@ -2175,6 +2200,7 @@ class HabitatApp(tk.Tk):
                 plot_heatmap_profiles(df_scaled, parameters, habitat_labels, best_k, out_dir)
                 plot_radar_profiles(df_scaled, parameters, habitat_labels, out_dir)
                 export_results(df_scaled, parameters, habitat_labels, out_dir)
+                save_scaling_info(scaling_info, out_dir)
                 save_run_meta(scaling_info, cl_stats, out_dir)
                 generate_report_pdf(out_dir, df_scaled, parameters,
                                     habitat_labels, best_k, method)
@@ -2228,7 +2254,7 @@ class HabitatApp(tk.Tk):
         self._im_lbl_csv = ttk.Label(f_browse, text=t("no_file"),
                                       style="Sub.TLabel")
         self._im_lbl_csv.pack(side='left', fill='x', expand=True)
-        ttk.Button(f_browse, text="📁", style="Secondary.TButton", width=3,
+        ttk.Button(f_browse, text="ðŸ“", style="Secondary.TButton", width=3,
                    command=self._im_select_files_folder).pack(side='right', padx=(0, 2))
         ttk.Button(f_browse, text=t("browse"), style="Secondary.TButton",
                    command=self._im_select_files).pack(side='right')
@@ -2533,6 +2559,7 @@ class HabitatApp(tk.Tk):
                 plot_heatmap_profiles(df_scaled, parameters, habitat_labels, best_k, out_dir)
                 plot_radar_profiles(df_scaled, parameters, habitat_labels, out_dir)
                 export_results(df_scaled, parameters, habitat_labels, out_dir)
+                save_scaling_info(scaling_info, out_dir)
                 save_run_meta(scaling_info, cl_stats, out_dir)
                 generate_report_pdf(out_dir, df_scaled, parameters,
                                     habitat_labels, best_k, method)
@@ -2679,31 +2706,43 @@ class HabitatApp(tk.Tk):
         else:
             self._atl_refresh_list()
 
-        ttk.Button(inner, text=t("add_mouse"), style="Secondary.TButton",
-                   command=self._atl_add_mouse).pack(anchor='w', padx=px, pady=(0, 8))
+        _atl_btn_row = ttk.Frame(inner)
+        _atl_btn_row.pack(anchor='w', padx=px, pady=(0, 8))
+        ttk.Button(_atl_btn_row, text=t("add_mouse"), style="Secondary.TButton",
+                   command=self._atl_add_mouse).pack(side='left', padx=(0, 4))
+        ttk.Button(_atl_btn_row, text=t("import_parent_folder"), style="Secondary.TButton",
+                   command=self._atl_import_folders).pack(side='left')
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
-        # ── Normalization ────────────────────────────────────────────────────
-        ttk.Label(inner, text=t("normalization_section"),
+        # -- Construction de l'atlas : norm + K + d_topo ----------------------
+        ttk.Label(inner, text=t("atl_construction_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
+
+        ttk.Label(inner, text=t("normalization_section"),
+                  style="Sub.TLabel").pack(anchor='w', padx=px, pady=(2, 1))
         ttk.Radiobutton(inner,
-                        text=t("norm_global_robust"),
+                        text=t("norm_robust_recal_jt_radio"),
                         variable=self._atl_normalization,
-                        value='robust_global').pack(anchor='w', padx=px + 4, pady=1)
+                        value='robust_recal').pack(anchor='w', padx=px + 4, pady=1)
         ttk.Radiobutton(inner,
                         text=t("norm_permouse_robust"),
                         variable=self._atl_normalization,
-                        value='robust').pack(anchor='w', padx=px + 4, pady=(1, 6))
-        ttk.Label(inner,
-                  text=t("norm_global_robust_hint"),
-                  style="Sub.TLabel", wraplength=500).pack(anchor='w', padx=px + 4, pady=(0, 6))
+                        value='robust').pack(anchor='w', padx=px + 4, pady=1)
+        _atl_norm_hint = ttk.Label(inner, text="", style="Sub.TLabel", wraplength=500)
+        _atl_norm_hint.pack(anchor='w', padx=px + 22, pady=(0, 6))
+        _atl_norm_keys = {
+            'robust_recal': "norm_robust_recal_jt_hint",
+            'robust'      : "norm_permouse_robust_hint",
+        }
+        def _atl_norm_update(*_, _lbl=_atl_norm_hint, _keys=_atl_norm_keys):
+            key = _keys.get(self._atl_normalization.get(), "")
+            _lbl.config(text=t(key) if key else "")
+        self._atl_normalization.trace_add('write', _atl_norm_update)
+        _atl_norm_update()
 
-        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
-
-        # ── Atlas / K parameters ─────────────────────────────────────────────
         ttk.Label(inner, text=t("atl_params_section"),
-                  style="Section.TLabel").pack(anchor='w', **pad)
+                  style="Sub.TLabel").pack(anchor='w', padx=px, pady=(8, 1))
 
         def arow(label, widget_fn):
             f = ttk.Frame(inner)
@@ -2726,6 +2765,26 @@ class HabitatApp(tk.Tk):
              lambda f: ttk.Spinbox(f, from_=1, to=100,
                                     textvariable=self._atl_n_init,
                                     width=6).pack(side='left'))
+
+        hdr_atl = ttk.Frame(inner)
+        hdr_atl.pack(fill='x', padx=px, pady=(10, 0))
+        ttk.Label(hdr_atl, text=t("dtopo_section"),
+                  style="Sub.TLabel").pack(side='left')
+        ttk.Button(hdr_atl, text="⚠", width=2, style="Secondary.TButton",
+                   command=_show_dtopo_necrosis_warning).pack(side='left', padx=(8, 0))
+
+        f_atl_dtw = ttk.Frame(inner)
+        f_atl_dtw.pack(fill='x', padx=px, pady=3)
+        ttk.Label(f_atl_dtw, text=t("dtopo_weight_label"), width=34).pack(side='left')
+        ttk.Spinbox(f_atl_dtw, from_=0.0, to=1.0, increment=0.05, format="%.2f",
+                    textvariable=self._atl_dtopo_weight, width=7).pack(side='left')
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
+
+        # -- Validation statistique -------------------------------------------
+        ttk.Label(inner, text=t("atl_validation_section"),
+                  style="Section.TLabel").pack(anchor='w', **pad)
+
         arow(t("bootstrap_runs"),
              lambda f: ttk.Spinbox(f, from_=0, to=200,
                                     textvariable=self._atl_n_bootstrap,
@@ -2735,6 +2794,10 @@ class HabitatApp(tk.Tk):
                                     textvariable=self._atl_n_perm,
                                     width=7).pack(side='left'))
 
+        ttk.Label(inner,
+                  text=t("atl_validation_hint"),
+                  style="Sub.TLabel", wraplength=500
+                  ).pack(anchor='w', padx=px, pady=(0, 8))
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # ── Output ───────────────────────────────────────────────────────────
@@ -2870,17 +2933,16 @@ class HabitatApp(tk.Tk):
         ttk.Label(row1, text=t("mouse_n", n=i + 1),
                   font=THEME["font_bold"], width=9).pack(side='left', padx=(4, 2))
 
-        n   = len(animal["files"])
         lbl = ttk.Label(row1,
-                        text=t("n_files", n=n) if n else t("no_files"),
-                        style="Sub.TLabel", width=12)
+                        text=self._fmt_animal_label(animal),
+                        style="Sub.TLabel", width=22)
         lbl.pack(side='left', padx=6)
         animal["_lbl"] = lbl
 
         ttk.Button(row1, text=t("browse"), style="Secondary.TButton",
                    command=lambda a=animal: self._atl_browse(a)
                    ).pack(side='left', padx=2)
-        ttk.Button(row1, text="📁", style="Secondary.TButton", width=3,
+        ttk.Button(row1, text="ðŸ“", style="Secondary.TButton", width=3,
                    command=lambda a=animal: self._browse_animal_folder(a)
                    ).pack(side='left', padx=2)
 
@@ -2917,9 +2979,10 @@ class HabitatApp(tk.Tk):
             filetypes=[("CSV files", "*.csv")])
         if files:
             animal["files"] = list(files)
+            animal["name"]  = os.path.basename(os.path.dirname(files[0]))
             if animal.get("_lbl"):
                 animal["_lbl"].config(
-                    text=t("n_files", n=len(files)),
+                    text=self._fmt_animal_label(animal),
                     foreground=THEME["text"])
 
     def _atl_select_output(self):
@@ -2941,13 +3004,11 @@ class HabitatApp(tk.Tk):
                                for v in animal.get("covar_vars", [])])
 
         if len(mice_data) < 2:
-            messagebox.showerror(t("err_title"),
-                                 "Select CSV files for at least 2 mice.")
+            messagebox.showerror(t("err_title"), t("err_min_mice_csv"))
             return
 
         if len(set(group_labels)) < 2:
-            messagebox.showerror(t("err_title"),
-                                 "Assign mice to at least 2 different groups.")
+            messagebox.showerror(t("err_title"), t("err_min_groups"))
             return
 
         default_dir = os.path.dirname(os.path.dirname(mice_data[0]["files"][0]))
@@ -2972,6 +3033,7 @@ class HabitatApp(tk.Tk):
             "k_range"      : range(self._atl_k_min.get(), self._atl_k_max.get() + 1),
             "k_override"   : k_ov,
             "normalization": self._atl_normalization.get(),
+            "dtopo_weight" : round(self._atl_dtopo_weight.get(), 3),
             "n_init"       : self._atl_n_init.get(),
             "n_bootstrap"  : self._atl_n_bootstrap.get(),
             "n_perm"       : self._atl_n_perm.get(),
@@ -3002,6 +3064,7 @@ class HabitatApp(tk.Tk):
                 k_range        = p["k_range"],
                 k_override     = p["k_override"],
                 normalization  = p["normalization"],
+                dtopo_weight   = p.get("dtopo_weight", 0.0),
                 n_init         = p["n_init"],
                 n_bootstrap    = p["n_bootstrap"],
                 n_perm         = p["n_perm"],
@@ -3374,13 +3437,12 @@ class HabitatApp(tk.Tk):
 
         lines = []
         if dir_empty:
-            lines.append("• No output location selected")
+            lines.append(t("confirm_output_no_dir"))
         if name_empty:
-            lines.append("• No folder name specified")
-        msg = "\n".join(lines)
-        msg += f"\n\nResults will be saved to:\n{default_path}\n\nProceed with this default?"
+            lines.append(t("confirm_output_no_name"))
+        msg = "\n".join(lines) + "\n\n" + t("confirm_output_msg", path=default_path)
 
-        return messagebox.askyesno("Output not configured", msg, icon='warning')
+        return messagebox.askyesno(t("confirm_output_title"), msg, icon='warning')
 
     def _run(self):
         """
@@ -3647,6 +3709,7 @@ class HabitatApp(tk.Tk):
             plot_heatmap_profiles(df_scaled, parameters, habitat_labels, best_k, out_dir)
             plot_radar_profiles(df_scaled, parameters, habitat_labels, out_dir)
             export_results(df_scaled, parameters, habitat_labels, out_dir, proba=proba)
+            save_scaling_info(scaling_info, out_dir)
             probmap_pdf = generate_probmap_pdf(df_scaled, parameters, proba, out_dir)
             save_run_meta(scaling_info, cl_stats, out_dir)
             generate_report_pdf(out_dir, df_scaled, parameters,
@@ -3718,8 +3781,12 @@ class HabitatApp(tk.Tk):
         else:
             self._disc_refresh_list()
 
-        ttk.Button(inner, text=t("add_mouse"), style="Secondary.TButton",
-                   command=self._disc_add_mouse).pack(anchor='w', padx=px, pady=(0, 8))
+        _disc_btn_row = ttk.Frame(inner)
+        _disc_btn_row.pack(anchor='w', padx=px, pady=(0, 8))
+        ttk.Button(_disc_btn_row, text=t("add_mouse"), style="Secondary.TButton",
+                   command=self._disc_add_mouse).pack(side='left', padx=(0, 4))
+        ttk.Button(_disc_btn_row, text=t("import_parent_folder"), style="Secondary.TButton",
+                   command=self._shared_import_folders).pack(side='left')
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
@@ -3760,6 +3827,50 @@ class HabitatApp(tk.Tk):
              lambda f: ttk.Spinbox(f, from_=0, to=15,
                                    textvariable=self._disc_meta_k,
                                    width=6).pack(side='left'))
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
+
+        # ── 2nd pass — directional merge ──────────────────────────────
+        ttk.Label(inner, text=t("disc_merge_section"),
+                  style="Section.TLabel").pack(anchor='w', **pad)
+        ttk.Label(inner, text=t("disc_merge_desc"),
+                  style="Sub.TLabel", wraplength=510).pack(anchor='w', padx=px, pady=(0, 4))
+
+        for val, key in [("off",     "disc_merge_off"),
+                         ("suggest", "disc_merge_suggest"),
+                         ("auto",    "disc_merge_auto")]:
+            ttk.Radiobutton(inner, text=t(key),
+                            variable=self._disc_merge_mode,
+                            value=val).pack(anchor='w', padx=px + 4, pady=1)
+
+        f_thr = ttk.Frame(inner)
+        f_thr.pack(fill='x', padx=px, pady=3)
+        ttk.Label(f_thr, text=t("disc_merge_threshold"), width=30).pack(side='left')
+        ttk.Spinbox(f_thr, from_=0.70, to=0.99, increment=0.01,
+                    textvariable=self._disc_cosine_thr,
+                    format="%.2f", width=7).pack(side='left')
+
+        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
+
+        # ── Level 2 — sub-clustering ──────────────────────────────────
+        ttk.Label(inner, text=t("disc_sub_section"),
+                  style="Section.TLabel").pack(anchor='w', **pad)
+        ttk.Label(inner, text=t("disc_sub_desc"),
+                  style="Sub.TLabel", wraplength=510).pack(anchor='w', padx=px, pady=(0, 4))
+        ttk.Checkbutton(inner, text=t("disc_sub_enable"),
+                        variable=self._disc_sub_enabled).pack(anchor='w', padx=px + 4)
+        f_sub_k = ttk.Frame(inner)
+        f_sub_k.pack(fill='x', padx=px, pady=3)
+        ttk.Label(f_sub_k, text=t("disc_sub_k_max"), width=30).pack(side='left')
+        ttk.Spinbox(f_sub_k, from_=2, to=8, textvariable=self._disc_sub_kmax,
+                    width=4).pack(side='left')
+        ttk.Label(f_sub_k, text=t("disc_sub_k_note"),
+                  style="Sub.TLabel").pack(side='left', padx=6)
+        f_sub_v = ttk.Frame(inner)
+        f_sub_v.pack(fill='x', padx=px, pady=3)
+        ttk.Label(f_sub_v, text=t("disc_sub_min_vox"), width=30).pack(side='left')
+        ttk.Spinbox(f_sub_v, from_=50, to=2000, increment=50,
+                    textvariable=self._disc_sub_minvox, width=7).pack(side='left')
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
@@ -3826,14 +3937,14 @@ class HabitatApp(tk.Tk):
     # ── Animal card helpers ───────────────────────────────────────────
 
     def _disc_add_mouse(self):
-        self._disc_animals.append({"files": [], "group_var": tk.IntVar(value=0)})
-        self._disc_refresh_list()
+        self._shared_animals.append({"files": [], "group_var": tk.IntVar(value=0)})
+        self._shared_refresh_all()
 
     def _disc_remove_mouse(self, idx):
-        if len(self._disc_animals) <= 1:
+        if len(self._shared_animals) <= 1:
             return
-        self._disc_animals.pop(idx)
-        self._disc_refresh_list()
+        self._shared_animals.pop(idx)
+        self._shared_refresh_all()
 
     def _disc_refresh_list(self):
         if self._disc_list_inner is None:
@@ -3850,17 +3961,16 @@ class HabitatApp(tk.Tk):
         ttk.Label(card, text=t("mouse_n", n=i+1),
                   font=THEME["font_bold"], width=9).pack(side='left', padx=(4, 2))
 
-        n   = len(animal["files"])
         lbl = ttk.Label(card,
-                        text=t("n_files", n=n) if n else t("no_files"),
-                        style="Sub.TLabel", width=12)
+                        text=self._fmt_animal_label(animal),
+                        style="Sub.TLabel", width=22)
         lbl.pack(side='left', padx=6)
-        animal["_lbl"] = lbl
+        animal["_disc_lbl"] = lbl
 
         ttk.Button(card, text=t("browse"), style="Secondary.TButton",
                    command=lambda a=animal: self._disc_browse(a)
                    ).pack(side='left', padx=2)
-        ttk.Button(card, text="📁", style="Secondary.TButton", width=3,
+        ttk.Button(card, text="ðŸ“", style="Secondary.TButton", width=3,
                    command=lambda a=animal: self._disc_browse_folder(a)
                    ).pack(side='left', padx=2)
 
@@ -3881,10 +3991,35 @@ class HabitatApp(tk.Tk):
             filetypes=[("CSV files", "*.csv")])
         if files:
             animal["files"] = list(files)
-            if animal.get("_lbl"):
-                animal["_lbl"].config(
-                    text=t("n_files", n=len(files)),
-                    foreground=THEME["text"])
+            animal["name"]  = os.path.basename(os.path.dirname(files[0]))
+            self._update_shared_lbl(animal)
+
+    def _shared_refresh_all(self):
+        """Rebuild the animal cards in Joint, Compare and Discovery (shared list)."""
+        self._jt_refresh_list()
+        self._cmp_refresh_list()
+        self._disc_refresh_list()
+
+    def _update_shared_lbl(self, animal):
+        """Update every tab's label widget for this animal after files/name change."""
+        text = self._fmt_animal_label(animal)
+        for key in ("_jt_lbl", "_cmp_lbl", "_disc_lbl", "_lbl"):
+            lbl = animal.get(key)
+            if lbl:
+                try:
+                    lbl.config(text=text, foreground=THEME["text"])
+                except tk.TclError:
+                    pass
+
+    @staticmethod
+    def _fmt_animal_label(animal):
+        """Return a compact display string: 'FolderName (Nf)' or 'Nf' or '—'."""
+        n    = len(animal.get("files", []))
+        name = animal.get("name", "")
+        if name:
+            short = (name[:15] + "…") if len(name) > 16 else name
+            return f"{short} ({n}f)" if n else short
+        return f"{n}f" if n else "—"
 
     def _browse_animal_folder(self, animal):
         """Shared folder-browse for all per-animal cards: picks all .csv files directly inside the chosen folder."""
@@ -3901,13 +4036,80 @@ class HabitatApp(tk.Tk):
             messagebox.showwarning(t("warn_empty_folder"), t("warn_no_csv_in_folder"))
             return
         animal["files"] = files
-        if animal.get("_lbl"):
-            animal["_lbl"].config(
-                text=t("n_files", n=len(files)),
-                foreground=THEME["text"])
+        animal["name"]  = os.path.basename(folder)
+        self._update_shared_lbl(animal)
 
     # kept as alias so existing references in _disc_build_card still work
     _disc_browse_folder = _browse_animal_folder
+
+    def _import_from_parent_folder(self, animals_list, make_animal_fn, refresh_fn):
+        """Select a parent folder; add one entry per immediate subfolder that contains CSV files.
+
+        If the current list contains only empty animals, it is cleared first so
+        the import result replaces the default placeholders.
+        """
+        parent = filedialog.askdirectory(title=t("dlg_select_parent_folder"))
+        if not parent:
+            return
+        to_add = []
+        try:
+            entries = sorted(os.listdir(parent))
+        except OSError:
+            return
+        for entry in entries:
+            subfolder = os.path.join(parent, entry)
+            if not os.path.isdir(subfolder):
+                continue
+            try:
+                csv_files = sorted(
+                    os.path.join(subfolder, f)
+                    for f in os.listdir(subfolder)
+                    if f.lower().endswith('.csv')
+                    and os.path.isfile(os.path.join(subfolder, f))
+                )
+            except OSError:
+                continue
+            if csv_files:
+                to_add.append(csv_files)
+        if not to_add:
+            messagebox.showwarning(
+                t("warn_no_csv_subfolders_title"),
+                t("warn_no_csv_subfolders", path=parent))
+            return
+        # Replace default empty placeholders with imported entries
+        if all(not a.get("files") for a in animals_list):
+            animals_list.clear()
+        for csv_files in to_add:
+            animal = make_animal_fn(csv_files)
+            animal["name"] = os.path.basename(os.path.dirname(csv_files[0]))
+            animals_list.append(animal)
+        refresh_fn()
+
+    # ── Per-tab import-folder wrappers ────────────────────────────────────────
+
+    def _shared_import_folders(self):
+        """Import one mouse per subfolder into the shared Joint/Compare/Discovery list."""
+        self._import_from_parent_folder(
+            self._shared_animals,
+            make_animal_fn=lambda files: {"files": files, "group_var": tk.IntVar(value=0)},
+            refresh_fn=self._shared_refresh_all)
+
+    def _ia_import_folders(self):
+        self._import_from_parent_folder(
+            self._ia_animals,
+            make_animal_fn=lambda files: {"files": files},
+            refresh_fn=self._ia_refresh_list)
+
+    def _atl_import_folders(self):
+        n = len(self._atl_covar_names)
+        self._import_from_parent_folder(
+            self._atl_animals,
+            make_animal_fn=lambda files: {
+                "files"     : files,
+                "group_var" : tk.IntVar(value=0),
+                "covar_vars": [tk.StringVar(value="") for _ in range(n)],
+            },
+            refresh_fn=self._atl_refresh_list)
 
     def _disc_select_output(self):
         path = filedialog.askdirectory(title=t("dlg_select_output"))
@@ -3937,14 +4139,19 @@ class HabitatApp(tk.Tk):
             out_root = os.path.join(default_dir, self._disc_output_name.get())
 
         params = {
-            "animals"   : [{"files": list(a["files"]),
-                            "group" : a["group_var"].get()}
-                           for a in self._disc_animals],
-            "method"    : self._disc_method.get(),
-            "k_max"     : self._disc_k_max.get(),
-            "n_init"    : self._disc_n_init.get(),
-            "meta_k"    : int(self._disc_meta_k.get()) or None,
-            "out_root"  : out_root,
+            "animals"      : [{"files": list(a["files"]),
+                               "group" : a["group_var"].get()}
+                              for a in self._disc_animals],
+            "method"       : self._disc_method.get(),
+            "k_max"        : self._disc_k_max.get(),
+            "n_init"       : self._disc_n_init.get(),
+            "meta_k"       : int(self._disc_meta_k.get()) or None,
+            "merge_mode"   : self._disc_merge_mode.get(),
+            "cosine_thr"   : float(self._disc_cosine_thr.get()),
+            "sub_clust"    : bool(self._disc_sub_enabled.get()),
+            "sub_kmax"     : int(self._disc_sub_kmax.get()),
+            "sub_minvox"   : int(self._disc_sub_minvox.get()),
+            "out_root"     : out_root,
         }
 
         self.btn_disc_run.config(state='disabled', text=t("running"))
@@ -4038,7 +4245,17 @@ class HabitatApp(tk.Tk):
                     for c in range(best_k)
                 }
                 export_results(df_scaled, parameters, hab_labels_auto, out_dir)
+                save_scaling_info(scaling_info, out_dir)
                 save_run_meta(scaling_info, None, out_dir)
+
+                proba_disc = extra_info.get("proba")
+                if proba_disc is not None:
+                    try:
+                        generate_probmap_pdf(df_scaled, parameters, proba_disc, out_dir)
+                        log(f"[{name}] Probability maps saved.")
+                    except Exception as _pe:
+                        log(f"[{name}] Prob-map skipped: {_pe}")
+
                 log(f"[{name}] Done → {best_k} clusters", tag="ok")
 
                 # Build mouse_data dict for meta-clustering
@@ -4099,6 +4316,37 @@ class HabitatApp(tk.Tk):
             meta_stats = compute_meta_stats(
                 X, meta_labels, row_meta, common_params, chosen_k, len(mice_data))
 
+            # ── 2nd pass: directional merge ──────────────────────────
+            merge_mode         = p.get("merge_mode", "suggest")
+            cosine_thr         = float(p.get("cosine_thr", 0.92))
+            sim_matrix         = None
+            merge_groups       = []
+            near_zero          = None
+            pre_merge_stats    = meta_stats
+            original_k         = chosen_k
+            merge_group_labels = []
+
+            if merge_mode in ("suggest", "auto"):
+                log(f"[Discovery] 2nd pass: directional merge (cosine ≥ {cosine_thr})")
+                sim_matrix, merge_groups, near_zero = compute_cosine_similarity(
+                    meta_stats, common_params, cosine_thr)
+                if merge_groups:
+                    for g in merge_groups:
+                        g_labels = [meta_stats[i]["display_label"] for i in g]
+                        log(f"[Discovery]   → Merge candidate: {' + '.join(g_labels)}")
+                    merge_group_labels = [
+                        [meta_stats[i]["display_label"] for i in g]
+                        for g in merge_groups
+                    ]
+                else:
+                    log("[Discovery]   → No candidates above threshold.")
+                if merge_mode == "auto" and merge_groups:
+                    pre_merge_stats = list(meta_stats)
+                    meta_labels, meta_stats = apply_directional_merge(
+                        merge_groups, meta_stats, meta_labels, X, row_meta,
+                        common_params, len(mice_data))
+                    log(f"[Discovery]   → K reduced: {original_k} → {len(meta_stats)}")
+
             # ── Figures ─────────────────────────────────────────────
             log("[Discovery] Generating figures…")
             n_mice_disc = len(mice_data)
@@ -4111,7 +4359,14 @@ class HabitatApp(tk.Tk):
             fig_radar_per_mh(meta_stats, common_params, n_mice_disc,
                              X, meta_labels, row_meta, out_root)
             fig_radar_combined(meta_stats, common_params, out_root)
-            fig_crosstab(row_meta, meta_labels, meta_stats, out_root)
+            _f8_groups = merge_groups if merge_mode == "suggest" else []
+            fig_crosstab(row_meta, meta_labels, meta_stats, out_root,
+                         merge_groups=_f8_groups)
+            if merge_mode != "off" and sim_matrix is not None:
+                fig_cosine_heatmap(
+                    sim_matrix, pre_merge_stats, near_zero, merge_groups,
+                    cosine_thr, common_params, out_root, merge_mode)
+                log("[Discovery] F_cos done")
             seg_figs = fig_segmentation_maps(
                 mice_data, row_meta, meta_labels, meta_stats, out_root)
             log(f"[Discovery] Segmentation maps: {len(seg_figs)} mouse map(s)")
@@ -4119,8 +4374,28 @@ class HabitatApp(tk.Tk):
             pdf_path = _disc_generate_pdf(
                 meta_stats, common_params, len(mice_data),
                 chosen_k, method, k_scores, out_root,
-                seg_figs=seg_figs)
+                seg_figs=seg_figs,
+                merge_mode=merge_mode,
+                cosine_threshold=cosine_thr,
+                merge_group_labels=merge_group_labels,
+                original_k=original_k)
             log(f"[Discovery] PDF → {pdf_path}", tag="ok")
+
+            # ── Level-2 sub-clustering (optional) ──────────────────────
+            if p.get("sub_clust"):
+                log("[Discovery] Level 2: intra-habitat sub-clustering…")
+                sub_results = run_sub_clustering(
+                    mice_data, row_meta, meta_labels, meta_stats,
+                    common_params,
+                    k_sub_max=p.get("sub_kmax", 4),
+                    min_voxels=p.get("sub_minvox", 200),
+                    log=log)
+                pdf2 = generate_subclust_pdf(sub_results, out_root, len(mice_data),
+                                             mice_list=mice_data)
+                if pdf2:
+                    log(f"[Discovery] Level-2 PDF → {pdf2}", tag="ok")
+                else:
+                    log("[Discovery] Level 2: no MH had sufficient voxels.")
 
             # ── Explanation text ─────────────────────────────────────
             text = self._generate_discovery_text(
@@ -4352,62 +4627,81 @@ class HabitatApp(tk.Tk):
         else:
             self._jt_refresh_list()
 
-        ttk.Button(inner, text=t("add_mouse"), style="Secondary.TButton",
-                   command=self._jt_add_mouse).pack(anchor='w', padx=px, pady=(0, 8))
+        _jt_btn_row = ttk.Frame(inner)
+        _jt_btn_row.pack(anchor='w', padx=px, pady=(0, 8))
+        ttk.Button(_jt_btn_row, text=t("add_mouse"), style="Secondary.TButton",
+                   command=self._jt_add_mouse).pack(side='left', padx=(0, 4))
+        ttk.Button(_jt_btn_row, text=t("import_parent_folder"), style="Secondary.TButton",
+                   command=self._shared_import_folders).pack(side='left')
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
-        # ── Normalization ─────────────────────────────────────────────
-        ttk.Label(inner, text=t("normalization_section"),
+        # -- Espace commun : normalisation & topologie ------------------------
+        ttk.Label(inner, text=t("jt_space_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
 
+        ttk.Label(inner, text=t("normalization_section"),
+                  style="Sub.TLabel").pack(anchor='w', padx=px, pady=(2, 1))
         ttk.Radiobutton(
             inner,
-            text=t("norm_robust_global_jt_radio"),
+            text=t("norm_robust_recal_jt_radio"),
             variable=self._jt_normalization,
-            value='robust_global'
+            value='robust_recal'
         ).pack(anchor='w', padx=px + 4, pady=1)
-        ttk.Label(inner,
-                  text=t("norm_robust_global_jt_hint"),
-                  style="Sub.TLabel", wraplength=500
-                  ).pack(anchor='w', padx=px + 22, pady=(0, 6))
-
         ttk.Radiobutton(
             inner,
             text=t("norm_robust_jt_radio"),
             variable=self._jt_normalization,
             value='robust'
         ).pack(anchor='w', padx=px + 4, pady=1)
-        ttk.Label(inner,
-                  text=t("norm_robust_jt_hint"),
-                  style="Sub.TLabel", wraplength=500
-                  ).pack(anchor='w', padx=px + 22, pady=(0, 6))
+        _jt_norm_hint = ttk.Label(inner, text="", style="Sub.TLabel", wraplength=500)
+        _jt_norm_hint.pack(anchor='w', padx=px + 22, pady=(0, 6))
+        _jt_norm_keys = {
+            'robust_recal': "norm_robust_recal_jt_hint",
+            'robust'      : "norm_robust_jt_hint",
+        }
+        def _jt_norm_update(*_, _lbl=_jt_norm_hint, _keys=_jt_norm_keys):
+            key = _keys.get(self._jt_normalization.get(), "")
+            _lbl.config(text=t(key) if key else "")
+        self._jt_normalization.trace_add('write', _jt_norm_update)
+        _jt_norm_update()
 
-        ttk.Radiobutton(
-            inner,
-            text=t("norm_cl_hybrid_jt_radio"),
-            variable=self._jt_normalization,
-            value='cl_hybrid'
-        ).pack(anchor='w', padx=px + 4, pady=1)
-        ttk.Label(inner,
-                  text=t("norm_cl_hybrid_jt_hint"),
-                  style="Sub.TLabel", wraplength=500
-                  ).pack(anchor='w', padx=px + 22, pady=(0, 6))
+        hdr_f = ttk.Frame(inner)
+        hdr_f.pack(fill='x', padx=px, pady=(4, 0))
+        ttk.Label(hdr_f, text=t("dtopo_section"),
+                  style="Sub.TLabel").pack(side='left')
+        ttk.Button(hdr_f, text="?", width=2,
+                   style="Secondary.TButton",
+                   command=self._show_dtopo_help).pack(side='left', padx=(8, 0))
 
-        ttk.Radiobutton(
-            inner,
-            text=t("norm_cl_jt_radio"),
-            variable=self._jt_normalization,
-            value='cl'
-        ).pack(anchor='w', padx=px + 4, pady=1)
+        def dtopo_row(label, widget_fn):
+            f = ttk.Frame(inner)
+            f.pack(fill='x', padx=px, pady=3)
+            ttk.Label(f, text=label, width=30).pack(side='left')
+            widget_fn(f)
+
+        def _dtopo_weight_row(f):
+            ttk.Spinbox(f, from_=0.0, to=1.0, increment=0.05, format="%.2f",
+                        textvariable=self._jt_dtopo_weight, width=7).pack(side='left')
+            ttk.Button(f, text="⚠", width=2, style="Secondary.TButton",
+                       command=_show_dtopo_necrosis_warning).pack(side='left', padx=(6, 0))
+        dtopo_row(t("dtopo_weight_label"), _dtopo_weight_row)
+
+        dtopo_row(
+            t("dtopo_min_frac_label"),
+            lambda f: ttk.Spinbox(
+                f, from_=1, to=30, increment=1,
+                textvariable=self._jt_dtopo_min_frac_pct, width=7
+            ).pack(side='left'))
+
         ttk.Label(inner,
-                  text=t("norm_cl_jt_hint"),
+                  text=t("dtopo_hint"),
                   style="Sub.TLabel", wraplength=500
-                  ).pack(anchor='w', padx=px + 22, pady=(0, 6))
+                  ).pack(anchor='w', padx=px, pady=(0, 8))
 
         ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
-        # ── Clustering method ────────────────────────────────────────
+        # -- Clustering : methode & K -----------------------------------------
         ttk.Label(inner, text=t("method_section"),
                   style="Section.TLabel").pack(anchor='w', **pad)
         ttk.Label(inner,
@@ -4420,18 +4714,14 @@ class HabitatApp(tk.Tk):
                             variable=self._jt_method,
                             value=val).pack(anchor='w', padx=px + 4, pady=1)
 
-        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
+        ttk.Label(inner, text=t("k_params_section"),
+                  style="Sub.TLabel").pack(anchor='w', padx=px, pady=(8, 1))
 
-        # ── Parameter frames (toggled by method) ─────────────────────
         params_area = ttk.Frame(inner)
         params_area.pack(fill='x')
 
-        # --- K-based params frame ---
         k_frame = ttk.Frame(params_area)
         self._jt_k_params_frame = k_frame
-
-        ttk.Label(k_frame, text=t("k_params_section"),
-                  style="Sub.TLabel").pack(anchor='w', padx=px)
 
         def jrow(label, widget_fn, parent=None):
             p = parent if parent is not None else k_frame
@@ -4469,44 +4759,6 @@ class HabitatApp(tk.Tk):
                         ).pack(anchor='w', padx=px + 4, pady=2)
 
         self._jt_k_params_frame.pack(fill='x')
-
-        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
-
-        # ── d_topo spatial feature ───────────────────────────────────
-        hdr_f = ttk.Frame(inner)
-        hdr_f.pack(fill='x', padx=px, pady=(4, 0))
-        ttk.Label(hdr_f, text=t("dtopo_section"),
-                  style="Section.TLabel").pack(side='left')
-        ttk.Button(hdr_f, text="?", width=2,
-                   style="Secondary.TButton",
-                   command=self._show_dtopo_help).pack(side='left', padx=(8, 0))
-
-        def dtopo_row(label, widget_fn):
-            f = ttk.Frame(inner)
-            f.pack(fill='x', padx=px, pady=3)
-            ttk.Label(f, text=label, width=30).pack(side='left')
-            widget_fn(f)
-
-        dtopo_row(
-            t("dtopo_weight_label"),
-            lambda f: ttk.Spinbox(
-                f, from_=0.0, to=1.0, increment=0.05, format="%.2f",
-                textvariable=self._jt_dtopo_weight, width=7
-            ).pack(side='left'))
-
-        dtopo_row(
-            t("dtopo_min_frac_label"),
-            lambda f: ttk.Spinbox(
-                f, from_=1, to=30, increment=1,
-                textvariable=self._jt_dtopo_min_frac_pct, width=7
-            ).pack(side='left'))
-
-        ttk.Label(inner,
-                  text=t("dtopo_hint"),
-                  style="Sub.TLabel", wraplength=500
-                  ).pack(anchor='w', padx=px, pady=(0, 4))
-
-        ttk.Separator(inner).pack(fill='x', padx=px, pady=6)
 
         # ── Output ───────────────────────────────────────────────────
         ttk.Label(inner, text=t("output_section"),
@@ -4571,14 +4823,14 @@ class HabitatApp(tk.Tk):
     # ── Animal card helpers ──────────────────────────────────────────
 
     def _jt_add_mouse(self):
-        self._jt_animals.append({"files": [], "group_var": tk.IntVar(value=0)})
-        self._jt_refresh_list()
+        self._shared_animals.append({"files": [], "group_var": tk.IntVar(value=0)})
+        self._shared_refresh_all()
 
     def _jt_remove_mouse(self, idx):
-        if len(self._jt_animals) <= 1:
+        if len(self._shared_animals) <= 1:
             return
-        self._jt_animals.pop(idx)
-        self._jt_refresh_list()
+        self._shared_animals.pop(idx)
+        self._shared_refresh_all()
 
     def _jt_refresh_list(self):
         if self._jt_list_inner is None:
@@ -4595,17 +4847,16 @@ class HabitatApp(tk.Tk):
         ttk.Label(card, text=t("mouse_n", n=i + 1),
                   font=THEME["font_bold"], width=9).pack(side='left', padx=(4, 2))
 
-        n   = len(animal["files"])
         lbl = ttk.Label(card,
-                        text=t("n_files", n=n) if n else t("no_files"),
-                        style="Sub.TLabel", width=12)
+                        text=self._fmt_animal_label(animal),
+                        style="Sub.TLabel", width=22)
         lbl.pack(side='left', padx=6)
-        animal["_lbl"] = lbl
+        animal["_jt_lbl"] = lbl
 
         ttk.Button(card, text=t("browse"), style="Secondary.TButton",
                    command=lambda a=animal: self._jt_browse(a)
                    ).pack(side='left', padx=2)
-        ttk.Button(card, text="📁", style="Secondary.TButton", width=3,
+        ttk.Button(card, text="ðŸ“", style="Secondary.TButton", width=3,
                    command=lambda a=animal: self._browse_animal_folder(a)
                    ).pack(side='left', padx=2)
 
@@ -4626,10 +4877,8 @@ class HabitatApp(tk.Tk):
             filetypes=[("CSV files", "*.csv")])
         if files:
             animal["files"] = list(files)
-            if animal.get("_lbl"):
-                animal["_lbl"].config(
-                    text=t("n_files", n=len(files)),
-                    foreground=THEME["text"])
+            animal["name"]  = os.path.basename(os.path.dirname(files[0]))
+            self._update_shared_lbl(animal)
 
     def _jt_select_output(self):
         path = filedialog.askdirectory(title=t("dlg_select_output"))
@@ -4745,7 +4994,24 @@ class HabitatApp(tk.Tk):
             dtopo_report  = result.get('dtopo_report', {})
             dtopo_weight  = result.get('dtopo_weight', 1.0)
             dtopo_min_frac= result.get('dtopo_min_frac', 0.05)
+            norm_check    = result.get('norm_check')
             log(f"[Joint] Clustering complete — {best_k} universal habitats (H0…H{best_k-1})")
+
+            # Visible warning in UI if normalization consistency is degraded
+            if norm_check and norm_check["severity"] != "ok":
+                sev   = norm_check["severity"]
+                score = norm_check["score"]
+                worst = norm_check["worst_param"]
+                max_s = norm_check["max_std"]
+                icon  = "⚠" if sev == "caution" else "⚠⚠"
+                tag   = "warning" if sev == "warning" else None
+                log(f"[Joint] {icon} Normalization consistency — {sev.upper()}", tag=tag)
+                log(f"[Joint]   Mean inter-mouse spread = {score:.3f} IQR units "
+                    f"(worst: {worst} ±{max_s:.3f})", tag=tag)
+                log("[Joint]   Per-mouse robust z-score normalizes each mouse to its own tumor "
+                    "median — if compositions differ, the same tissue type gets different values "
+                    "in different mice.", tag=tag)
+                log("[Joint]   → Discovery (pools local prototypes) avoids this problem.", tag=tag)
 
             habitat_labels = {c: f"H{c}" for c in range(best_k)}
 
@@ -4753,7 +5019,9 @@ class HabitatApp(tk.Tk):
             _jt_export_per_mouse(
                 df_pooled, common_params,
                 p["mice_list"], out_root, best_k,
-                normalization=normalization, log_fn=log)
+                normalization=normalization, log_fn=log,
+                norm_check=norm_check,
+                proba=result.get('extra_info', {}).get('proba'))
 
             log("[Joint] Generating boundary analysis PDF…")
             try:
@@ -4766,6 +5034,7 @@ class HabitatApp(tk.Tk):
             _norm_desc_map = {
                 'cl'           : "CL-based  (0 = contralateral tissue)",
                 'cl_hybrid'    : "CL-hybrid  (CL centering + tumor-IQR scale)",
+                'cl_global'    : "CL-global  (CL centering + global-IQR scale)",
                 'robust'       : "per-mouse robust  (0 = each mouse's tumor median)",
                 'robust_global': "global robust  (0 = global tumor median)",
             }
@@ -5152,3 +5421,4 @@ def launch():
 
 if __name__ == "__main__":
     launch()
+

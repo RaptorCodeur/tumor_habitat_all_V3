@@ -10,6 +10,7 @@
 # =============================================================================
 
 import os
+import re
 import datetime
 import warnings
 import threading
@@ -394,6 +395,319 @@ def compute_meta_stats(X, meta_labels, row_meta: list,
 
 
 # =============================================================================
+# 4b. SECOND PASS — DIRECTIONAL MERGE
+# =============================================================================
+
+def compute_cosine_similarity(meta_stats: list, common_params: list,
+                               threshold: float = 0.92):
+    """
+    Compute pairwise cosine similarity between meta-habitat mean centroids.
+
+    Centroids whose L2 norm is < 0.25 IQR units (i.e. near the tumour median
+    origin) are flagged as near-zero: cosine is undefined for them and they are
+    excluded from merge candidates.
+
+    Returns
+    -------
+    sim_matrix   : ndarray (n_mh, n_mh)  — cosine similarities; NaN for
+                   rows/cols of near-zero centroids (diagonal always 1.0)
+    merge_groups : list of lists of int  — indices into meta_stats for each
+                   connected component of pairs exceeding `threshold`
+    near_zero    : ndarray (n_mh,) bool  — True when centroid is near origin
+    """
+    centroids = np.array([s["mean_centroid"] for s in meta_stats], dtype=float)
+    norms     = np.linalg.norm(centroids, axis=1)
+    near_zero = norms < 0.25
+
+    norms_safe = np.where(norms < 1e-8, 1.0, norms)
+    c_hat      = centroids / norms_safe[:, None]
+
+    sim = np.clip(c_hat @ c_hat.T, -1.0, 1.0)
+    np.fill_diagonal(sim, 1.0)
+
+    n = len(meta_stats)
+    for i in range(n):
+        if near_zero[i]:
+            sim[i, :] = np.nan
+            sim[:, i] = np.nan
+            sim[i, i] = 1.0   # keep self-reference for display
+
+    # Union-find to collect connected components above threshold
+    parent = list(range(n))
+
+    def _find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i in range(n):
+        if near_zero[i]:
+            continue
+        for j in range(i + 1, n):
+            if near_zero[j]:
+                continue
+            v = sim[i, j]
+            if not np.isnan(v) and v >= threshold:
+                ri, rj = _find(i), _find(j)
+                if ri != rj:
+                    parent[ri] = rj
+
+    groups_raw: dict = {}
+    for i in range(n):
+        groups_raw.setdefault(_find(i), []).append(i)
+
+    merge_groups = [sorted(g) for g in groups_raw.values() if len(g) > 1]
+    return sim, merge_groups, near_zero
+
+
+def apply_directional_merge(merge_groups: list, meta_stats: list,
+                             meta_labels: np.ndarray,
+                             X: np.ndarray, row_meta: list,
+                             common_params: list, n_mice_total: int):
+    """
+    Re-label meta_labels by merging each group in merge_groups into its most
+    prevalent member (first index in the sorted group, since meta_stats is
+    sorted by prevalence descending).
+
+    Returns new_labels (0-based), new_meta_stats (recomputed).
+    """
+    label_map = {s["meta_label"]: s["meta_label"] for s in meta_stats}
+    for group in merge_groups:
+        rep = meta_stats[group[0]]["meta_label"]   # most prevalent
+        for idx in group[1:]:
+            label_map[meta_stats[idx]["meta_label"]] = rep
+
+    raw = np.array([label_map[int(l)] for l in meta_labels])
+    unique = sorted(set(raw))
+    remap  = {old: new for new, old in enumerate(unique)}
+    new_labels = np.array([remap[l] for l in raw])
+    new_k      = len(unique)
+
+    new_meta_stats = compute_meta_stats(
+        X, new_labels, row_meta, common_params, new_k, n_mice_total)
+    return new_labels, new_meta_stats
+
+
+# =============================================================================
+# 4c. LEVEL-2 SUB-CLUSTERING (OPTIONAL)
+# =============================================================================
+
+def collect_mh_voxels(mice_list: list, row_meta: list, meta_labels,
+                       common_params: list, mh_meta_label: int):
+    """
+    For a given meta-habitat (identified by its raw meta_label integer), load
+    all raw voxels from the original habitats_result.csv files.
+
+    Returns (X_vox, mri_params, spatial_df) where:
+        X_vox      : ndarray (N_vox, n_mri_params)  — d_topo_norm excluded
+        mri_params : list of parameter names matching X_vox columns
+        spatial_df : DataFrame with columns [mouse, X, Y, Slice] for each voxel
+    Returns (None, [], None) if nothing found.
+    """
+    mh_map: dict[str, set] = {}
+    for rm, ml in zip(row_meta, meta_labels):
+        if int(ml) == mh_meta_label:
+            mh_map.setdefault(rm["mouse"], set()).add(rm["cluster_id"])
+
+    mri_params  = [p for p in common_params if p != "d_topo_norm"]
+    rows:     list[np.ndarray] = []
+    spatials: list[pd.DataFrame] = []
+
+    for mouse in mice_list:
+        cids = mh_map.get(mouse["name"])
+        if not cids:
+            continue
+        try:
+            df = pd.read_csv(mouse["csv_path"])
+        except Exception:
+            continue
+
+        mask = df["Habitat"].isin(cids)
+        sub  = df[mask]
+        if len(sub) == 0:
+            continue
+
+        # Feature matrix
+        avail = [p for p in mri_params if p in df.columns]
+        if avail:
+            feat = sub[avail].to_numpy(dtype=float)
+            if len(avail) < len(mri_params):
+                full = np.zeros((len(feat), len(mri_params)), dtype=float)
+                for j, p in enumerate(mri_params):
+                    if p in avail:
+                        full[:, j] = feat[:, avail.index(p)]
+                feat = full
+            rows.append(feat)
+
+        # Spatial metadata — keep whatever coordinate columns exist
+        sp_cols = [c for c in ("X", "Y", "Slice") if c in df.columns]
+        sp = sub[sp_cols].copy()
+        sp["mouse"] = mouse["name"]
+        spatials.append(sp)
+
+    if not rows:
+        return None, [], None
+
+    spatial_df = pd.concat(spatials, ignore_index=True) if spatials else None
+    return np.nan_to_num(np.vstack(rows), nan=0.0), mri_params, spatial_df
+
+
+def run_sub_clustering(mice_list: list, row_meta: list, meta_labels,
+                        meta_stats: list, common_params: list,
+                        k_sub_max: int = 4,
+                        n_init: int = 5,
+                        min_voxels: int = 200,
+                        log=print) -> dict:
+    """
+    Level-2 sub-clustering: within each meta-habitat, pool raw voxels from all
+    mice (already per-mouse robust z-scored) and fit a BIC-optimal GMM to find
+    intra-habitat sub-populations.
+
+    K=1 (no split) is always evaluated as baseline. If BIC selects K=1, the
+    meta-habitat is considered homogeneous and no sub-clustering is reported.
+    This prevents forcing artificial splits on unimodal distributions.
+
+    k_sub_max : maximum number of sub-clusters to try (K=1 to k_sub_max).
+    """
+    mri_idx = [i for i, p in enumerate(common_params) if p != "d_topo_norm"]
+
+    results: dict = {}
+
+    for mh_idx, ms in enumerate(meta_stats):
+        mh_label = ms["display_label"]
+        meta_lbl = ms["meta_label"]
+
+        log(f"[Sub-clust] {mh_label}: collecting voxels…")
+        X_vox, mri_params, spatial_df = collect_mh_voxels(
+            mice_list, row_meta, meta_labels, common_params, meta_lbl)
+
+        n_vox = 0 if X_vox is None else len(X_vox)
+
+        if X_vox is None or n_vox < min_voxels:
+            log(f"[Sub-clust] {mh_label}: SKIP — {n_vox} voxels < {min_voxels} minimum")
+            results[mh_idx] = {"skipped": True,
+                                "skip_reason": f"{n_vox} voxels < {min_voxels}",
+                                "meta_stat": ms}
+            continue
+
+        # ── Per-mouse centering: remove inter-mouse normalisation offset ──────
+        # Each mouse was robust z-scored against its own tumour median, so within
+        # a pooled MH their voxel clouds can be offset from each other.  Centering
+        # each mouse's contribution to zero-mean (within this MH) removes that
+        # additive offset and lets the GMM find intra-mouse tissue structure.
+        if spatial_df is not None and "mouse" in spatial_df.columns:
+            mouse_ids   = spatial_df["mouse"].values
+            X_for_clust = X_vox.copy().astype(float)
+            for m in np.unique(mouse_ids):
+                mask_m = mouse_ids == m
+                X_for_clust[mask_m] -= X_for_clust[mask_m].mean(axis=0)
+            n_mice_here = len(np.unique(mouse_ids))
+            log(f"[Sub-clust] {mh_label}: per-mouse centering applied ({n_mice_here} mice)")
+        else:
+            X_for_clust = X_vox
+
+        # Cap so each sub-cluster has at least 50 voxels on average
+        k_cap = min(k_sub_max, n_vox // 50)
+        k_cap = max(k_cap, 1)
+
+        log(f"[Sub-clust] {mh_label}: {n_vox} voxels — BIC K=1…{k_cap}")
+
+        best_bic, best_k, best_gmm = np.inf, 1, None
+        for k in range(1, k_cap + 1):
+            try:
+                gmm = GaussianMixture(n_components=k, n_init=(1 if k == 1 else n_init),
+                                      covariance_type="full",
+                                      reg_covar=1e-4,
+                                      random_state=RANDOM_SEED, max_iter=300)
+                gmm.fit(X_for_clust)
+                bic = gmm.bic(X_for_clust)
+                log(f"[Sub-clust]   K={k}  BIC={bic:.1f}")
+                if bic < best_bic:
+                    best_bic, best_k, best_gmm = bic, k, gmm
+            except Exception as exc:
+                log(f"[Sub-clust]   K={k} failed: {exc}")
+
+        if best_gmm is None:
+            results[mh_idx] = {"skipped": True, "skip_reason": "GMM failed",
+                                "meta_stat": ms}
+            continue
+
+        # K=1 wins → no meaningful sub-structure
+        if best_k == 1:
+            log(f"[Sub-clust] {mh_label}: homogeneous — BIC prefers K=1, no split.")
+            results[mh_idx] = {"skipped": True,
+                                "skip_reason": "BIC prefers K=1 (homogeneous)",
+                                "meta_stat": ms}
+            continue
+
+        sub_labels = best_gmm.predict(X_for_clust)
+
+        # ── Minimum sub-cluster size filter ───────────────────────────────────
+        # Eliminates degenerate micro-clusters (outliers captured as a component).
+        # If any cluster is too small, reduce K by 1 and refit until all pass.
+        min_sub_size = max(30, int(0.05 * n_vox))
+        for _attempt in range(best_k - 1):
+            sizes = [(sub_labels == s).sum() for s in range(best_k)]
+            if min(sizes) >= min_sub_size:
+                break
+            best_k -= 1
+            log(f"[Sub-clust]   → micro-cluster detected, reducing to K={best_k}")
+            if best_k == 1:
+                break
+            try:
+                gmm2 = GaussianMixture(n_components=best_k, n_init=n_init,
+                                       covariance_type="full", reg_covar=1e-4,
+                                       random_state=RANDOM_SEED, max_iter=300)
+                gmm2.fit(X_for_clust)
+                sub_labels = gmm2.predict(X_for_clust)
+                best_gmm   = gmm2
+            except Exception:
+                break
+
+        if best_k == 1:
+            log(f"[Sub-clust] {mh_label}: homogeneous after size filter.")
+            results[mh_idx] = {"skipped": True,
+                                "skip_reason": "BIC prefers K=1 (homogeneous)",
+                                "meta_stat": ms}
+            continue
+
+        log(f"[Sub-clust] {mh_label}: K_sub={best_k} selected (BIC={best_bic:.1f})")
+
+        # Centroids reported in original (non-centred) space for interpretability
+        meta_centroid = ms["mean_centroid"][mri_idx]
+
+        sub_stats = []
+        for s in range(best_k):
+            mask = sub_labels == s
+            n_s  = int(mask.sum())
+            cen  = X_vox[mask].mean(axis=0)   # original space
+            delta = cen - meta_centroid
+            sub_stats.append({
+                "sub_label"    : s,
+                "display_label": f"{mh_label}.{s + 1}",
+                "n_voxels"     : n_s,
+                "centroid"     : {p: float(cen[j]) for j, p in enumerate(mri_params)},
+                "delta"        : {p: float(delta[j]) for j, p in enumerate(mri_params)},
+            })
+            log(f"[Sub-clust]   {mh_label}.{s + 1}: {n_s:,} voxels")
+
+        results[mh_idx] = {
+            "skipped"      : False,
+            "meta_stat"    : ms,
+            "X"            : X_vox,
+            "mri_params"   : mri_params,
+            "sub_labels"   : sub_labels,
+            "sub_k"        : best_k,
+            "sub_stats"    : sub_stats,
+            "meta_centroid": meta_centroid,
+            "spatial_df"   : spatial_df,
+        }
+
+    return results
+
+
+# =============================================================================
 # 5. FIGURES
 # =============================================================================
 
@@ -521,6 +835,121 @@ def fig_profiles_heatmap(meta_stats: list, common_params: list, out_dir: str) ->
     return path
 
 
+# --- F_cos: Cosine similarity heatmap (2nd pass) -----------------------------
+
+def fig_cosine_heatmap(sim_matrix: np.ndarray, meta_stats: list,
+                        near_zero: np.ndarray, merge_groups: list,
+                        threshold: float, common_params: list,
+                        out_dir: str, merge_mode: str = "suggest") -> str:
+    """
+    NxN heatmap of cosine similarity between meta-habitat mean centroids.
+    Merge-candidate pairs (above threshold) are highlighted with an orange
+    border.  Near-zero centroids are shown as N/A.
+    """
+    n      = len(meta_stats)
+    labels = [s["display_label"] for s in meta_stats]
+
+    cmap_cos = LinearSegmentedColormap.from_list(
+        "cos_map", ["#2471A3", "#EAECEE", "#C0392B"], N=256
+    )
+
+    cell = max(0.80, min(1.3, 9.0 / max(n, 1)))
+    fig, ax = plt.subplots(figsize=(n * cell + 2.5, n * cell + 2.8))
+    fig.patch.set_facecolor(_THEME["bg"])
+
+    masked = np.ma.masked_invalid(sim_matrix)
+    im = ax.imshow(masked, cmap=cmap_cos, vmin=-1.0, vmax=1.0, aspect="auto")
+
+    from matplotlib.patches import Rectangle
+    for i in range(n):
+        for j in range(n):
+            if near_zero[i] or near_zero[j]:
+                ax.text(j, i, "N/A", ha="center", va="center",
+                        fontsize=6, color="#AAAAAA")
+                continue
+            v = sim_matrix[i, j]
+            if np.isnan(v):
+                continue
+            if i == j:
+                ax.text(j, i, "—", ha="center", va="center",
+                        fontsize=7, color="#888888")
+            else:
+                txt_col = "white" if abs(v) > 0.55 else "#111111"
+                fw      = "bold" if v >= threshold else "normal"
+                ax.text(j, i, f"{v:.2f}", ha="center", va="center",
+                        fontsize=7, color=txt_col, fontweight=fw)
+                if v >= threshold:
+                    ax.add_patch(Rectangle(
+                        (j - 0.5, i - 0.5), 1, 1,
+                        lw=2.0, edgecolor="#E85D24",
+                        facecolor="none", zorder=5))
+
+    ax.set_xticks(range(n))
+    ax.set_xticklabels(labels, fontsize=9)
+    ax.set_yticks(range(n))
+    ax.set_yticklabels(labels, fontsize=9)
+
+    mode_str = {"suggest": "suggestion only", "auto": "auto-merged"}.get(merge_mode, "")
+    ax.set_title(
+        f"Directional similarity between meta-habitat centroids  (cosine)\n"
+        f"Threshold = {threshold:.2f}  ·  orange-bordered = merge candidates"
+        + (f"  [{mode_str}]" if mode_str else ""),
+        fontsize=10, fontweight="bold",
+    )
+    fig.colorbar(im, ax=ax, label="Cosine similarity", shrink=0.8)
+
+    nz_labels = [labels[i] for i in range(n) if near_zero[i]]
+    if nz_labels:
+        ax.text(0.01, -0.04,
+                f"N/A = centroid near origin (cosine undefined): {', '.join(nz_labels)}",
+                transform=ax.transAxes, fontsize=7, color="#777777", va="top")
+
+    # Merge candidate summary box
+    if merge_groups:
+        lines = []
+        for g in merge_groups:
+            g_labels = [meta_stats[i]["display_label"] for i in g]
+            shared   = np.nanmean([meta_stats[i]["mean_centroid"] for i in g], axis=0)
+            n_p      = len(common_params)
+            pos_i    = sorted([i for i in range(n_p) if shared[i] >  0.15],
+                               key=lambda x: -shared[x])[:3]
+            neg_i    = sorted([i for i in range(n_p) if shared[i] < -0.15],
+                               key=lambda x:  shared[x])[:3]
+            sig_pos  = "  ".join(f"{common_params[i]}↑" for i in pos_i)
+            sig_neg  = "  ".join(f"{common_params[i]}↓" for i in neg_i)
+            sig      = "  /  ".join(filter(None, [sig_pos, sig_neg])) or "mixed"
+            pairs    = [
+                f"{meta_stats[g[a]]['display_label']}↔"
+                f"{meta_stats[g[b]]['display_label']}: "
+                f"{sim_matrix[g[a], g[b]]:.2f}"
+                for a in range(len(g)) for b in range(a + 1, len(g))
+            ]
+            lines.append(
+                f"  {' + '.join(g_labels)}"
+                f"  [{sig}]"
+                f"  ({', '.join(pairs)})"
+            )
+        txt = "Merge candidates (same direction, different amplitude):\n" + "\n".join(lines)
+        fig.text(
+            0.01, -0.01, txt,
+            fontsize=7.5, va="top", fontfamily="monospace", color="#1C1C1E",
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="#FEF9E7",
+                      alpha=0.92, edgecolor="#F39C12", linewidth=1.2),
+        )
+    else:
+        fig.text(
+            0.5, -0.01,
+            f"No merge candidates found above threshold {threshold:.2f}.",
+            ha="center", fontsize=8, color="#6B7280",
+        )
+
+    fig.tight_layout()
+    path = os.path.join(out_dir, "f_cosine.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
 # --- F4: Presence matrix (mice × meta-habitats) ------------------------------
 
 def fig_presence_matrix(mice_list: list, meta_labels, row_meta: list,
@@ -620,11 +1049,16 @@ def fig_meta_profiles_bar(meta_stats: list, common_params: list,
 # --- F6: Cross-tabulation user_label × meta-habitat (validation) -------------
 
 def fig_crosstab(row_meta: list, meta_labels, meta_stats: list,
-                  out_dir: str) -> str:
+                  out_dir: str,
+                  merge_groups: list | None = None) -> str:
     """
     Counts how many clusters of each user label end up in each meta-habitat.
     This is purely for post-hoc validation; labels are NOT used in discovery.
+    merge_groups : list of index lists (into meta_stats) — columns in the same
+                   group get the same highlight color. Only pass in suggest mode.
     """
+    _MERGE_PALETTE = ["#E67E22", "#27AE60", "#8E44AD", "#C0392B", "#2980B9"]
+
     disp_map = {s["meta_label"]: s["display_label"] for s in meta_stats}
     all_user_labels = sorted(set(rm["user_label"] for rm in row_meta))
     mh_display      = [s["display_label"] for s in meta_stats]
@@ -641,14 +1075,29 @@ def fig_crosstab(row_meta: list, meta_labels, meta_stats: list,
         if r is not None and c is not None:
             matrix[r, c] += 1
 
-    # Normalise row-wise so we read "given a user label, where does it land?"
     row_sums = matrix.sum(axis=1, keepdims=True).astype(float)
     row_sums[row_sums == 0] = 1.0
     matrix_norm = matrix / row_sums
 
+    # Build col → group-index map
+    col_group: dict[int, int] = {}
+    if merge_groups:
+        for gi, group in enumerate(merge_groups):
+            for idx in group:
+                if 0 <= idx < n_mh:
+                    col_group[idx] = gi
+
+    # Extra bottom margin when a legend is needed
+    bottom_margin = 0.18 if col_group else 0.05
     cell_h  = max(0.35, min(0.7, 10.0 / max(n_ul, 1)))
     fig_h   = max(3.5, n_ul * cell_h + 1.8)
     fig, ax = plt.subplots(figsize=(max(5, n_mh * 1.0 + 1.5), fig_h))
+    fig.subplots_adjust(bottom=bottom_margin)
+
+    # Colored column backgrounds (drawn before the heatmap so it stays behind)
+    for c, gi in col_group.items():
+        color = _MERGE_PALETTE[gi % len(_MERGE_PALETTE)]
+        ax.axvspan(c - 0.5, c + 0.5, color=color, alpha=0.12, zorder=0)
 
     im = ax.imshow(matrix_norm, cmap="Blues", vmin=0, vmax=1, aspect="auto")
 
@@ -665,6 +1114,14 @@ def fig_crosstab(row_meta: list, meta_labels, meta_stats: list,
         fontsize=10, fontweight="bold",
     )
 
+    # Color the x-tick labels of merge-candidate columns
+    ax.figure.canvas.draw()
+    for c, lbl in enumerate(ax.get_xticklabels()):
+        if c in col_group:
+            color = _MERGE_PALETTE[col_group[c] % len(_MERGE_PALETTE)]
+            lbl.set_color(color)
+            lbl.set_fontweight("bold")
+
     for r in range(n_ul):
         for c in range(n_mh):
             v = matrix_norm[r, c]
@@ -675,7 +1132,23 @@ def fig_crosstab(row_meta: list, meta_labels, meta_stats: list,
 
     fig.colorbar(im, ax=ax, label="Fraction of clusters from that user label",
                  shrink=0.8)
-    fig.tight_layout()
+
+    # Legend for merge groups
+    if col_group:
+        from matplotlib.patches import Patch
+        seen = sorted(set(col_group.values()))
+        handles = []
+        for gi in seen:
+            color = _MERGE_PALETTE[gi % len(_MERGE_PALETTE)]
+            members = [meta_stats[i]["display_label"]
+                       for i in merge_groups[gi] if i < n_mh]
+            handles.append(Patch(facecolor=color, alpha=0.5,
+                                 label=f"Merge candidate {gi + 1}: {' + '.join(members)}"))
+        ax.legend(handles=handles, loc="upper center",
+                  bbox_to_anchor=(0.5, -0.14), ncol=min(len(handles), 3),
+                  fontsize=7, title="2nd pass — directional merge (suggest)",
+                  title_fontsize=7, framealpha=0.85)
+
     path = os.path.join(out_dir, "f8_crosstab.png")
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -1316,20 +1789,159 @@ def export_assignment_csv(row_meta: list, meta_labels, meta_stats: list,
 
 
 # =============================================================================
-# 7. PDF REPORT
+# 7. COHORT TUMOR PROFILE
+# =============================================================================
+
+def fig_cohort_tumor_profile(mice_list: list, out_dir: str) -> str | None:
+    """
+    Heatmap of raw tumor medians and IQR across the cohort.
+
+    Reads scaling_params.csv from the output folder of each mouse
+    (parent directory of csv_path).  Produces two panels side by side:
+      Left  — raw median per parameter  (column z-scored for colour,
+               raw value annotated in each cell)
+      Right — IQR per parameter         (same layout)
+
+    Interpretation:
+      • Left panel: where does each mouse sit in absolute parameter space?
+        A row that is consistently blue = globally low signal (e.g. very
+        necrotic tumour); red = globally elevated.
+      • Right panel: how heterogeneous is each parameter within the tumour?
+        High IQR = large intra-tumoral variability for that parameter.
+    """
+    import pandas as pd
+
+    # ── Collect scaling_params.csv for each mouse ─────────────────────────
+    records_med: dict = {}   # mouse_name -> {param: median_raw}
+    records_iqr: dict = {}   # mouse_name -> {param: iqr_raw}
+
+    for mouse in mice_list:
+        csv_path   = mouse.get("csv_path", "")
+        mouse_name = mouse["name"]
+        scale_path = os.path.join(os.path.dirname(csv_path), "scaling_params.csv")
+        if not os.path.exists(scale_path):
+            continue
+        try:
+            df_sp = pd.read_csv(scale_path)
+            records_med[mouse_name] = dict(zip(df_sp["parameter"], df_sp["median_raw"]))
+            records_iqr[mouse_name] = dict(zip(df_sp["parameter"], df_sp["iqr_raw"]))
+        except Exception:
+            continue
+
+    if len(records_med) < 2:
+        return None   # not enough data
+
+    # ── Build matrices ────────────────────────────────────────────────────
+    all_params = sorted({p for r in records_med.values() for p in r})
+    mouse_names = list(records_med.keys())
+
+    mat_med = np.array([[records_med[m].get(p, np.nan) for p in all_params]
+                        for m in mouse_names])
+    mat_iqr = np.array([[records_iqr[m].get(p, np.nan) for p in all_params]
+                        for m in mouse_names])
+
+    # Column z-score for colour (so cross-parameter scale differences don't dominate)
+    def col_zscore(mat: np.ndarray) -> np.ndarray:
+        out = np.full_like(mat, np.nan)
+        for j in range(mat.shape[1]):
+            col = mat[:, j]
+            valid = col[~np.isnan(col)]
+            if len(valid) < 2:
+                continue
+            mu, sd = valid.mean(), valid.std()
+            if sd < 1e-12:
+                out[:, j] = 0.0
+            else:
+                out[:, j] = (col - mu) / sd
+        return out
+
+    zmed = col_zscore(mat_med)
+    ziqr = col_zscore(mat_iqr)
+
+    # ── Figure ────────────────────────────────────────────────────────────
+    n_rows = len(mouse_names)
+    n_cols = len(all_params)
+    cell_w, cell_h = 1.5, 0.55
+    fig_w = max(10, n_cols * cell_w * 2 + 3.5)
+    fig_h = max(4, n_rows * cell_h + 2.5)
+
+    fig, (ax_med, ax_iqr) = plt.subplots(
+        1, 2, figsize=(fig_w, fig_h),
+        gridspec_kw={"wspace": 0.35},
+    )
+    fig.patch.set_facecolor("#F7F8FA")
+
+    _DIVMAP = LinearSegmentedColormap.from_list(
+        "_cohort_div",
+        ["#1565C0", "#FFFFFF", "#C62828"], N=256,
+    )
+
+    def _draw_panel(ax, zmat, rawmat, title, unit_label):
+        im = ax.imshow(zmat, cmap=_DIVMAP, vmin=-2.5, vmax=2.5, aspect="auto")
+
+        ax.set_xticks(range(n_cols))
+        ax.set_xticklabels(all_params, rotation=35, ha="right", fontsize=8)
+        ax.set_yticks(range(n_rows))
+        ax.set_yticklabels(mouse_names, fontsize=8)
+        ax.set_title(title, fontsize=9.5, fontweight="bold", pad=6)
+
+        # Annotate with raw values
+        for i in range(n_rows):
+            for j in range(n_cols):
+                v = rawmat[i, j]
+                z = zmat[i, j]
+                if np.isnan(v):
+                    continue
+                txt = f"{v:.3g}"
+                color = "white" if abs(z) > 1.4 else "#222"
+                ax.text(j, i, txt, ha="center", va="center",
+                        fontsize=6.5, color=color)
+
+        fig.colorbar(im, ax=ax, label=f"Column z-score ({unit_label})",
+                     shrink=0.65, pad=0.02)
+
+    _draw_panel(ax_med, zmed, mat_med,
+                "Tumor median per parameter\n(raw, unscaled values)",
+                "raw units")
+    _draw_panel(ax_iqr, ziqr, mat_iqr,
+                "Intra-tumor IQR per parameter\n(raw, unscaled — measure of heterogeneity)",
+                "raw units")
+
+    fig.suptitle(
+        "Cohort tumor profile  —  absolute position in parameter space\n"
+        "Colour = column z-score across mice  ·  Cell = raw value\n"
+        "Blue = low signal  ·  Red = elevated signal",
+        fontsize=10, fontweight="bold", y=1.01,
+    )
+    fig.tight_layout()
+
+    out_path = os.path.join(out_dir, "f00_cohort_tumor_profile.png")
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+# =============================================================================
+# 8. PDF REPORT  (was 7)
 # =============================================================================
 
 def generate_pdf(meta_stats: list, common_params: list,
                   n_mice: int, chosen_k: int, method: str,
                   k_scores: dict, out_dir: str,
                   seg_figs: list | None = None,
-                  criterion: str = 'elbow') -> str:
+                  criterion: str = 'elbow',
+                  merge_mode: str = 'off',
+                  cosine_threshold: float = 0.92,
+                  merge_group_labels: list | None = None,
+                  original_k: int | None = None) -> str:
     """
     Build the discovery PDF.
     seg_figs : optional list of (abs_path, caption) tuples — per-mouse
                segmentation maps appended after the standard figures.
     """
     _FIG_TITLES = [
+        ("f00_cohort_tumor_profile.png",
+                                  "F0.0 — Cohort tumor profile  (raw medians & IQR per mouse × parameter)"),
         ("f0_mouse_index.png",    "F0 — Mouse index  (M# labels used throughout the report)"),
         ("f1_summary_table.png",  "F1 — Meta-habitat summary table  (mean ± std per parameter)"),
         ("f2_k_selection.png",    f"F2 — K selection  "
@@ -1341,6 +1953,7 @@ def generate_pdf(meta_stats: list, common_params: list,
         ("f6_radar_per_mh.png",   "F6 — Radar profiles — one chart per meta-habitat"),
         ("f7_radar_combined.png", "F7 — Radar profiles — all meta-habitats overlaid"),
         ("f8_crosstab.png",       "F8 — Validation: user label → meta-habitat  (post-hoc)"),
+        ("f_cosine.png",          "F_cos — Directional similarity between meta-habitats  (2nd pass)"),
     ]
 
     path = os.path.join(out_dir, "multi_mouse_discovery_report.pdf")
@@ -1379,6 +1992,26 @@ def generate_pdf(meta_stats: list, common_params: list,
             )
         else:
             elbow_note = ""
+
+        # 2nd pass section
+        if merge_mode == 'off':
+            merge_note = "2nd pass      : disabled\n"
+        else:
+            merge_note = (
+                f"2nd pass      : {merge_mode}  (cosine ≥ {cosine_threshold})\n"
+            )
+            if merge_group_labels:
+                for g in merge_group_labels:
+                    merge_note += f"  → Merge candidate: {' + '.join(g)}\n"
+                if merge_mode == 'auto' and original_k is not None:
+                    merge_note += (
+                        f"  → K reduced: {original_k} → {len(meta_stats)}"
+                        f"  (auto-merge applied)\n"
+                    )
+            else:
+                merge_note += "  → No candidates above threshold\n"
+
+        has_cosine_fig = merge_mode != 'off'
         text = (
             f"Multi-Mouse Habitat Discovery\n"
             f"{'=' * 45}\n\n"
@@ -1387,7 +2020,8 @@ def generate_pdf(meta_stats: list, common_params: list,
             f"Method          : {method.upper()}\n"
             f"K selection     : {criterion_lbl}\n"
             f"Chosen K        : {chosen_k}\n"
-            f"Parameters      : {', '.join(common_params)}\n\n"
+            f"Parameters      : {', '.join(common_params)}\n"
+            f"{merge_note}\n"
             f"Discovery is purely data-driven — no biological\n"
             f"labels are used during meta-clustering.\n"
             f"User labels appear ONLY in F8 (validation).\n\n"
@@ -1396,6 +2030,7 @@ def generate_pdf(meta_stats: list, common_params: list,
             f"Meta-habitats (sorted by prevalence):\n"
             f"{summary_lines}\n"
             f"Figures:\n"
+            f"  F0.0 — Cohort tumor profile (raw medians & IQR)\n"
             f"  F1 — Meta-habitat summary table\n"
             f"  F2 — K selection curve\n"
             f"  F3 — PCA scatter (centroid space)\n"
@@ -1404,7 +2039,8 @@ def generate_pdf(meta_stats: list, common_params: list,
             f"  F6 — Radar profiles (per meta-habitat)\n"
             f"  F7 — Radar profiles (all overlaid)\n"
             f"  F8 — User label vs MH cross-tabulation\n"
-            f"  F9 — Segmentation maps\n"
+            + ("  F_cos — Directional similarity (2nd pass)\n" if has_cosine_fig else "")
+            + f"  F9 — Segmentation maps\n"
         )
         ax.text(0.08, 0.94, text, transform=ax.transAxes,
                 fontsize=10, va="top", fontfamily="monospace", color="#1C1C1E")
@@ -1434,13 +2070,552 @@ def generate_pdf(meta_stats: list, common_params: list,
 
 
 # =============================================================================
+# 7b. LEVEL-2 SUB-CLUSTERING FIGURES + PDF
+# =============================================================================
+
+_SUB_COLORS = ["#2196F3", "#F44336", "#4CAF50", "#FF9800", "#9C27B0",
+               "#00BCD4", "#795548", "#607D8B"]
+
+
+def fig_sub_profiles(sub_results: dict, out_dir: str) -> list:
+    """
+    One bar-chart per non-skipped meta-habitat showing sub-habitat centroid
+    profiles side by side, with the meta-centroid overlaid as a dashed step.
+
+    Returns list of (abs_path, mh_label, k_sub) tuples.
+    """
+    paths = []
+    for mh_idx, res in sub_results.items():
+        if res.get("skipped"):
+            continue
+
+        mh_label      = res["meta_stat"]["display_label"]
+        sub_stats     = res["sub_stats"]
+        mri_params    = res["mri_params"]
+        meta_centroid = res["meta_centroid"]
+        k_sub         = res["sub_k"]
+        n_params      = len(mri_params)
+
+        x     = np.arange(n_params)
+        width = 0.72 / k_sub
+
+        fig, ax = plt.subplots(figsize=(max(7, n_params * 1.3), 5))
+
+        for s, ss in enumerate(sub_stats):
+            vals   = [ss["centroid"].get(p, 0.0) for p in mri_params]
+            color  = _SUB_COLORS[s % len(_SUB_COLORS)]
+            offset = (s - k_sub / 2 + 0.5) * width
+            ax.bar(x + offset, vals, width * 0.92,
+                   label=f"{ss['display_label']}  ({ss['n_voxels']:,} vox)",
+                   color=color, alpha=0.82, edgecolor="black", linewidth=0.4)
+
+        # Meta-centroid reference
+        mc_x = np.concatenate([[x[0] - 0.45],
+                                np.repeat(x[1:], 2) - 0.45,
+                                [x[-1] + 0.45]])
+        mc_y = np.repeat(meta_centroid, 2)
+        ax.plot(mc_x, mc_y, color="black", linewidth=1.4,
+                linestyle="--", label="Meta-centroid (MH mean)", zorder=5)
+
+        ax.axhline(0, color="#888", linewidth=0.7, linestyle=":")
+        ax.set_xticks(x)
+        ax.set_xticklabels([p.replace("DTI-", "") for p in mri_params],
+                           rotation=30, ha="right", fontsize=9)
+        ax.set_ylabel("Robust-scaled value (IQR units)", fontsize=9)
+        ax.set_title(f"Level 2 — Sub-habitats within  {mh_label}",
+                     fontsize=11, fontweight="bold")
+        ax.legend(fontsize=8, framealpha=0.9, loc="best")
+        ax.grid(axis="y", linestyle="--", alpha=0.3)
+        plt.tight_layout()
+
+        fname = f"f10_sub_{mh_label.lower()}.png"
+        fpath = os.path.join(out_dir, fname)
+        fig.savefig(fpath, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        paths.append((fpath, mh_label, k_sub))
+
+    return paths
+
+
+# ── colour palette for sub-habitats (max 8) ──────────────────────────────────
+_SUB_COLORS = [
+    "#E74C3C", "#3498DB", "#2ECC71", "#F39C12",
+    "#9B59B6", "#1ABC9C", "#E67E22", "#34495E",
+]
+
+
+_REF_PARAM_PRIORITY = ["MTR", "T2", "T2star", "DTI-FA", "DTI-AD", "DTI-RD", "DTI-MD"]
+
+
+def _pick_ref_param(df: pd.DataFrame) -> str | None:
+    """Return the first priority MRI parameter found in df, or None."""
+    for p in _REF_PARAM_PRIORITY:
+        if p in df.columns:
+            return p
+    extras = [c for c in df.columns if c not in _NON_PARAM_COLS
+              and c not in {"mouse", "sub_label"}]
+    return extras[0] if extras else None
+
+
+def fig_sub_segmentation(res: dict, out_dir: str,
+                          mice_list: list | None = None,
+                          ref_param: str | None = None) -> list:
+    """
+    For each mouse, draw a grid of tumour slices with:
+      • Grayscale MRI background  — one of the CSV parameters normalised to [0,1]
+        (auto-selected by priority: MTR > T2 > T2star > DTI-FA … or user-supplied)
+      • Semi-transparent colour overlay  — one colour per sub-habitat (alpha ≈ 0.55)
+      • Sub-habitat border contours  — thin vector LineCollection
+
+    The full tumour ROI is always shown (all habitats in grayscale); only the
+    sub-habitats of this meta-habitat receive the colour overlay.
+
+    Returns list of (abs_path, mouse_name) tuples.
+    """
+    from matplotlib.collections import LineCollection
+    import matplotlib.colors as mcolors
+    import matplotlib.patches as mpatches
+
+    spatial_df = res.get("spatial_df")
+    if spatial_df is None or spatial_df.empty:
+        return []
+
+    sub_labels = res["sub_labels"]
+    k_sub      = res["sub_k"]
+    sub_stats  = res["sub_stats"]
+    mh_label   = res["meta_stat"]["display_label"]
+
+    df = spatial_df.copy().reset_index(drop=True)
+    df["sub_label"] = sub_labels
+
+    colors     = [_SUB_COLORS[s % len(_SUB_COLORS)] for s in range(k_sub)]
+    color_rgba = [mcolors.to_rgba(c) for c in colors]   # alpha set per-pixel below
+
+    # Pre-load full-tumour CSVs (background MRI values + full spatial extent)
+    bg_frames: dict[str, pd.DataFrame] = {}
+    detected_ref: str | None = None
+    if mice_list is not None:
+        for mouse in mice_list:
+            try:
+                bg = pd.read_csv(mouse["csv_path"])
+                if "X" in bg.columns and "Y" in bg.columns:
+                    bg_frames[mouse["name"]] = bg
+                    if detected_ref is None:
+                        detected_ref = _pick_ref_param(bg)
+            except Exception:
+                pass
+
+    # Honour explicit override; fall back to auto-detection
+    ref = ref_param if ref_param is not None else detected_ref
+
+    outputs = []
+    for mouse_name, df_m in df.groupby("mouse", sort=False):
+        slices = sorted(df_m["Slice"].unique())
+        n_sl   = len(slices)
+        if n_sl == 0:
+            continue
+
+        ncols = min(6, n_sl)
+        nrows = int(np.ceil(n_sl / ncols))
+
+        fig, axes = plt.subplots(nrows, ncols,
+                                 figsize=(2.8 * ncols, 2.8 * nrows + 1.1),
+                                 squeeze=False)
+        fig.patch.set_facecolor(_THEME["bg"])
+
+        bg_df_mouse = bg_frames.get(mouse_name)
+        has_ref = bg_df_mouse is not None and ref is not None and ref in bg_df_mouse.columns
+
+        for si, sl in enumerate(slices):
+            ax  = axes[si // ncols][si % ncols]
+            dfs = df_m[df_m["Slice"] == sl].copy()
+
+            # ── Spatial extent from full-tumour CSV ───────────────────────
+            if bg_df_mouse is not None and "Slice" in bg_df_mouse.columns:
+                bg_sl = bg_df_mouse[bg_df_mouse["Slice"] == sl]
+            elif bg_df_mouse is not None:
+                bg_sl = bg_df_mouse
+            else:
+                bg_sl = dfs
+
+            all_x = bg_sl["X"].values if len(bg_sl) else dfs["X"].values
+            all_y = bg_sl["Y"].values if len(bg_sl) else dfs["Y"].values
+
+            if len(all_x) == 0:
+                ax.axis("off")
+                continue
+
+            x_min, x_max = int(all_x.min()), int(all_x.max())
+            y_min, y_max = int(all_y.min()), int(all_y.max())
+            w = x_max - x_min + 1
+            h = y_max - y_min + 1
+
+            # ── Layer 1: grayscale MRI background ─────────────────────────
+            if has_ref and len(bg_sl):
+                ref_grid = np.full((h, w), np.nan, dtype=float)
+                bxi = (bg_sl["X"].values.astype(int) - x_min)
+                byi = (bg_sl["Y"].values.astype(int) - y_min)
+                valid = (bxi >= 0) & (bxi < w) & (byi >= 0) & (byi < h)
+                ref_grid[byi[valid], bxi[valid]] = bg_sl[ref].values[valid]
+
+                finite = ref_grid[np.isfinite(ref_grid)]
+                if len(finite):
+                    v_lo = float(np.nanpercentile(finite, 2))
+                    v_hi = float(np.nanpercentile(finite, 98))
+                    v_rng = max(v_hi - v_lo, 1e-8)
+                    ref_norm = np.where(np.isfinite(ref_grid),
+                                        np.clip((ref_grid - v_lo) / v_rng, 0.0, 1.0),
+                                        0.0)
+                    ax.imshow(ref_norm, cmap="gray", vmin=0, vmax=1,
+                              origin="upper", interpolation="nearest", aspect="equal")
+                else:
+                    has_ref = False   # fallback for this slice
+
+            if not has_ref or not len(bg_sl):
+                # Fallback: uniform light-grey canvas
+                ax.set_facecolor("#DEDEDE")
+
+            # ── Layer 2: sub-habitat RGBA overlay + label grid ────────────
+            rgba_ov  = np.zeros((h, w, 4), dtype=float)
+            sub_grid = np.full((h, w), -1, dtype=int)
+
+            if len(dfs):
+                xi_arr = (dfs["X"].values.astype(int) - x_min)
+                yi_arr = (dfs["Y"].values.astype(int) - y_min)
+                sl_arr = dfs["sub_label"].values.astype(int)
+                valid  = (xi_arr >= 0) & (xi_arr < w) & (yi_arr >= 0) & (yi_arr < h)
+                xi_arr, yi_arr, sl_arr = xi_arr[valid], yi_arr[valid], sl_arr[valid]
+
+                for s in range(k_sub):
+                    mask = sl_arr == s
+                    r, g, b, _ = color_rgba[s]
+                    rgba_ov[yi_arr[mask], xi_arr[mask]] = [r, g, b, 0.55]
+                    sub_grid[yi_arr[mask], xi_arr[mask]] = s
+
+            ax.imshow(rgba_ov, origin="upper", interpolation="nearest", aspect="equal")
+
+            # ── Layer 3: sub-habitat border contours ──────────────────────
+            u_labs = np.unique(sub_grid[sub_grid >= 0])
+            if len(u_labs) > 1:
+                segs = []
+                rs, cs = np.where(sub_grid[:-1, :] != sub_grid[1:, :])
+                if len(rs):
+                    segs.append(np.stack([
+                        np.column_stack([cs - 0.5, rs + 0.5]),
+                        np.column_stack([cs + 0.5, rs + 0.5]),
+                    ], axis=1))
+                rs, cs = np.where(sub_grid[:, :-1] != sub_grid[:, 1:])
+                if len(rs):
+                    segs.append(np.stack([
+                        np.column_stack([cs + 0.5, rs - 0.5]),
+                        np.column_stack([cs + 0.5, rs + 0.5]),
+                    ], axis=1))
+                if segs:
+                    ax.add_collection(LineCollection(
+                        np.concatenate(segs, axis=0),
+                        colors=[(0, 0, 0, 0.65)], linewidths=0.6,
+                        antialiased=False))
+
+            ax.set_title(f"Sl {int(sl)}", fontsize=7, pad=2)
+            ax.set_xlim(-0.5, w - 0.5)
+            ax.set_ylim(h - 0.5, -0.5)
+            ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+            for sp in ax.spines.values():
+                sp.set_linewidth(0.4)
+                sp.set_color("#BBBBBB")
+
+        # blank unused axes
+        for si in range(n_sl, nrows * ncols):
+            axes[si // ncols][si % ncols].axis("off")
+
+        handles = [
+            mpatches.Patch(facecolor=colors[s], alpha=0.80,
+                           label=f"{sub_stats[s]['display_label']}  "
+                                 f"({sub_stats[s]['n_voxels']:,} vox)")
+            for s in range(k_sub)
+        ]
+        ref_lbl = f"Grayscale background: {ref}" if (has_ref and ref) else "Gray background"
+        handles.append(mpatches.Patch(facecolor="#888888", label=ref_lbl))
+        fig.legend(handles=handles, loc="lower center",
+                   ncol=min(len(handles), 4), fontsize=8,
+                   bbox_to_anchor=(0.5, 0.0), framealpha=0.9)
+
+        safe_mouse = re.sub(r'[^\w\-]', '_', mouse_name)
+        safe_mh    = re.sub(r'[^\w\-]', '_', mh_label)
+        fname  = f"f10_seg_{safe_mh}_{safe_mouse}.png"
+        fpath  = os.path.join(out_dir, fname)
+        ref_title = f"  |  background: {ref}" if (has_ref and ref) else ""
+        fig.suptitle(f"{mh_label} — sub-habitats | {mouse_name}{ref_title}",
+                     fontsize=10, fontweight="bold", y=1.0)
+        plt.tight_layout(rect=[0, 0.08, 1, 1])
+        fig.savefig(fpath, dpi=130, bbox_inches="tight")
+        plt.close(fig)
+        outputs.append((os.path.abspath(fpath), mouse_name))
+
+    return outputs
+
+
+def fig_sub_delta_heatmap(sub_results: dict, out_dir: str) -> str | None:
+    """
+    Heatmap of Δ(sub_centroid − meta_centroid) for every sub-habitat across all
+    active meta-habitats.  Rows = sub-habitats (MH1.1, MH1.2, …), cols = params.
+    Separator lines mark boundaries between different meta-habitats.
+    Returns path to the saved figure, or None when there are no active results.
+    """
+    rows_data  = []   # list of (display_label, mh_display_label, delta_dict)
+    mri_params = None
+
+    for res in sub_results.values():
+        if res.get("skipped"):
+            continue
+        if mri_params is None:
+            mri_params = res["mri_params"]
+        for ss in res["sub_stats"]:
+            rows_data.append((ss["display_label"],
+                              res["meta_stat"]["display_label"],
+                              ss["delta"]))
+
+    if not rows_data or mri_params is None:
+        return None
+
+    n_rows = len(rows_data)
+    n_cols = len(mri_params)
+    data   = np.array([[r[2].get(p, 0.0) for p in mri_params] for r in rows_data])
+    labels = [r[0] for r in rows_data]
+    mh_of_row = [r[1] for r in rows_data]
+    vmax   = max(float(np.abs(data).max()), 0.3)
+
+    fig_h = max(3.0, n_rows * 0.60 + 1.8)
+    fig_w = max(6.0, n_cols * 1.15 + 2.2)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    fig.patch.set_facecolor(_THEME["bg"])
+
+    im = ax.imshow(data, cmap=_DIVMAP, vmin=-vmax, vmax=vmax, aspect="auto")
+
+    ax.set_xticks(range(n_cols))
+    ax.set_xticklabels(mri_params, rotation=40, ha="right", fontsize=9)
+    ax.set_yticks(range(n_rows))
+    ax.set_yticklabels(labels, fontsize=9)
+    ax.set_title(
+        "Level-2 sub-habitat profiles  (Δ = sub-centroid − meta-centroid)\n"
+        "Red = above MH mean  ·  Blue = below MH mean  ·  IQR units",
+        fontsize=10, fontweight="bold",
+    )
+
+    for i in range(n_rows):
+        for j in range(n_cols):
+            v = data[i, j]
+            ax.text(j, i, f"{v:+.2f}", ha="center", va="center",
+                    fontsize=7,
+                    color="white" if abs(v) > vmax * 0.55 else "black")
+
+    # Separator lines between meta-habitats
+    prev_mh = None
+    for i, mh in enumerate(mh_of_row):
+        if prev_mh is not None and mh != prev_mh:
+            ax.axhline(i - 0.5, color="#444444", linewidth=1.5, linestyle="--")
+        prev_mh = mh
+
+    fig.colorbar(im, ax=ax, label="Δ centroid vs meta-centroid (IQR units)",
+                 shrink=0.8)
+    fig.tight_layout()
+    path = os.path.join(out_dir, "f11_sub_delta_heatmap.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def fig_sub_radar(sub_results: dict, out_dir: str) -> str | None:
+    """
+    Radar charts for sub-habitats, one subplot per active meta-habitat.
+    Each sub-habitat is a coloured filled trace; the meta-centroid is a thick
+    dashed black reference.  Uses the same _radar_setup/_radar_trace helpers
+    as the main-discovery F6/F7 figures.
+    Returns path to the saved figure, or None when no active results exist.
+    """
+    active = {k: v for k, v in sub_results.items() if not v.get("skipped")}
+    if not active:
+        return None
+
+    n_mh  = len(active)
+    ncols = min(3, n_mh)
+    nrows = int(np.ceil(n_mh / ncols))
+
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(ncols * 4.8, nrows * 4.8),
+        subplot_kw=dict(polar=True),
+        squeeze=False,
+    )
+    fig.patch.set_facecolor(_THEME["bg"])
+
+    for plot_idx, (_, res) in enumerate(active.items()):
+        r, c       = divmod(plot_idx, ncols)
+        ax         = axes[r][c]
+        mh_label   = res["meta_stat"]["display_label"]
+        mri_params = res["mri_params"]
+        sub_stats  = res["sub_stats"]
+        k_sub      = res["sub_k"]
+        meta_c     = res["meta_centroid"]
+
+        angles = _radar_setup(ax, mri_params)
+
+        # Meta-centroid reference — thick dashed black
+        meta_disp  = (np.clip(meta_c, _RADAR_VMIN, _RADAR_VMAX) - _RADAR_VMIN).tolist()
+        a_closed   = angles + [angles[0]]
+        d_closed   = meta_disp + [meta_disp[0]]
+        ax.plot(a_closed, d_closed, color="#222222", linewidth=2.8,
+                linestyle="--", zorder=6, label="Meta-centroid")
+
+        # One trace per sub-habitat
+        for s, ss in enumerate(sub_stats):
+            color = _SUB_COLORS[s % len(_SUB_COLORS)]
+            vals  = [ss["centroid"].get(p, 0.0) for p in mri_params]
+            _radar_trace(ax, angles, vals, color,
+                         label=f"{ss['display_label']}  ({ss['n_voxels']:,} vox)",
+                         alpha=0.22, lw=2.2)
+
+        ax.legend(loc="upper right", bbox_to_anchor=(1.55, 1.18),
+                  fontsize=7.5, framealpha=0.9)
+        ax.set_title(
+            f"{mh_label}  —  K_sub = {k_sub}",
+            fontsize=9, fontweight="bold", pad=14,
+        )
+
+    for plot_idx in range(n_mh, nrows * ncols):
+        r, c = divmod(plot_idx, ncols)
+        axes[r][c].set_visible(False)
+
+    fig.suptitle(
+        "Level-2 radar profiles — sub-habitats within each meta-habitat\n"
+        "(IQR units — dashed ring = tumour median  [0]  — dashed black = meta-centroid)",
+        fontsize=10, fontweight="bold",
+    )
+    fig.tight_layout()
+    path = os.path.join(out_dir, "f12_sub_radar.png")
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
+def generate_subclust_pdf(sub_results: dict, out_dir: str, n_mice: int,
+                           mice_list: list | None = None) -> str | None:
+    """
+    Generate all Level-2 figures and assemble a standalone PDF.
+
+    Per non-skipped meta-habitat:
+      • bar-chart page   — sub-habitat centroid profiles vs. meta-centroid
+      • segmentation pages — one page per mouse showing sub-habitat labels
+                             on the actual tumour slices
+
+    K=1 always evaluated — skipped MHs are listed on the title page.
+    Returns PDF path, or None if every meta-habitat was skipped.
+    """
+    active = {k: v for k, v in sub_results.items() if not v.get("skipped")}
+    if not active:
+        return None
+
+    bar_paths = fig_sub_profiles(sub_results, out_dir)
+    bar_map   = {mh_label: fpath for fpath, mh_label, _ in bar_paths}
+
+    delta_path = fig_sub_delta_heatmap(sub_results, out_dir)
+    radar_path = fig_sub_radar(sub_results, out_dir)
+
+    pdf_path = os.path.join(out_dir, "multi_mouse_discovery_level2_report.pdf")
+    folder   = os.path.basename(os.path.abspath(out_dir))
+    now      = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    def _img_page(pdf_obj, fpath, caption):
+        if not fpath or not os.path.exists(fpath):
+            return
+        img  = mpimg.imread(fpath)
+        h, w = img.shape[:2]
+        fw   = 11.0
+        fh   = min(9.0, fw * h / w) + 0.5
+        fig  = plt.figure(figsize=(fw, fh))
+        tf   = 0.5 / fh
+        ax   = fig.add_axes([0, tf, 1, 1 - tf])
+        ax.imshow(img); ax.axis("off")
+        fig.text(0.5, tf * 0.4, caption,
+                 ha="center", va="center", fontsize=9, color="#6B7280")
+        pdf_obj.savefig(fig, bbox_inches="tight")
+        plt.close(fig)
+
+    with PdfPages(pdf_path) as pdf:
+
+        # ── Title page ──────────────────────────────────────────────
+        fig, ax = plt.subplots(figsize=(8.27, 11.69))
+        ax.axis("off")
+        ax.text(0.5, 0.96, folder, transform=ax.transAxes,
+                fontsize=16, fontweight="bold", ha="center", va="top",
+                color="#1C1C1E")
+        ax.text(0.5, 0.90, "Level 2 — Intra-habitat sub-clustering",
+                transform=ax.transAxes, fontsize=13, ha="center", color="#2E75B6")
+        ax.text(0.5, 0.85,
+                f"Generated: {now}    Mice: {n_mice}\n"
+                "K=1 always tested — split only when BIC confirms sub-structure.\n"
+                "F11 — Δ heatmap (all sub-habitats)  ·  F12 — Radar profiles\n"
+                "Per MH: centroid bar chart  +  segmentation maps per mouse.",
+                transform=ax.transAxes, fontsize=8.5, ha="center",
+                color="#555555", style="italic")
+
+        lines = ""
+        for mh_idx, res in sub_results.items():
+            ms = res["meta_stat"]
+            if res.get("skipped"):
+                lines += f"  {ms['display_label']:6s}: SKIP — {res.get('skip_reason', '')}\n"
+            else:
+                lines += (f"  {ms['display_label']:6s}: K_sub={res['sub_k']}"
+                          f"  ({len(res['X']):,} voxels)\n")
+                for ss in res["sub_stats"]:
+                    delta_str = "  ".join(
+                        f"{p.replace('DTI-', '')}: {v:+.2f}"
+                        for p, v in ss["delta"].items()
+                    )
+                    lines += (f"    {ss['display_label']:10s}  "
+                              f"{ss['n_voxels']:>6,} vox   Δ {delta_str}\n")
+
+        ax.text(0.06, 0.76, lines, transform=ax.transAxes,
+                fontsize=8, va="top", fontfamily="monospace", color="#1C1C1E")
+        pdf.savefig(fig); plt.close(fig)
+
+        # ── Overview figures (all MHs together) ─────────────────────
+        _img_page(pdf, delta_path,
+                  "F11 — Δ heatmap: sub-centroid − meta-centroid  (all sub-habitats)")
+        _img_page(pdf, radar_path,
+                  "F12 — Radar profiles: sub-habitats within each meta-habitat")
+
+        # ── Per meta-habitat pages ──────────────────────────────────
+        for mh_idx, res in active.items():
+            mh_label = res["meta_stat"]["display_label"]
+            k_sub    = res["sub_k"]
+
+            # Bar chart
+            _img_page(pdf, bar_map.get(mh_label),
+                      f"{mh_label} — centroid profiles  (K_sub={k_sub})")
+
+            # Segmentation maps — one page per mouse
+            seg_paths = fig_sub_segmentation(res, out_dir, mice_list=mice_list)
+            for seg_fpath, mouse_name in seg_paths:
+                _img_page(pdf, seg_fpath,
+                          f"{mh_label} — sub-habitats on slices  |  {mouse_name}")
+
+    return pdf_path
+
+
+# =============================================================================
 # 8. MAIN PIPELINE
 # =============================================================================
 
 def run_discovery(csv_paths: list, k_override: int | None,
                    k_range, n_init: int, method: str,
                    output_dir: str, log,
-                   criterion: str = 'elbow') -> dict:
+                   criterion: str = 'elbow',
+                   merge_mode: str = 'suggest',
+                   cosine_threshold: float = 0.92,
+                   sub_clust: bool = False,
+                   k_sub_max: int = 4,
+                   sub_min_voxels: int = 200) -> dict:
     """
     Full pipeline.  log(str) is called for progress messages.
     Returns a result dict or raises ValueError on unrecoverable errors.
@@ -1509,19 +2684,64 @@ def run_discovery(csv_paths: list, k_override: int | None,
             f"{s['n_clusters']:2d} clusters  "
             f"presence {s['presence_rate']*100:.0f}%")
 
+    # ── Second pass: directional merge ────────────────────────────────────
+    sim_matrix          = None
+    merge_groups        = []
+    near_zero           = None
+    pre_merge_stats     = meta_stats   # used for cosine figure
+    original_k          = chosen_k
+    merge_group_labels  = []
+
+    if merge_mode in ("suggest", "auto"):
+        log(f"\n-- 2nd pass: directional merge  (cosine ≥ {cosine_threshold}) --")
+        sim_matrix, merge_groups, near_zero = compute_cosine_similarity(
+            meta_stats, common_params, cosine_threshold)
+
+        if merge_groups:
+            for g in merge_groups:
+                g_labels = [meta_stats[i]["display_label"] for i in g]
+                log(f"  → Merge candidate: {' + '.join(g_labels)}")
+            merge_group_labels = [
+                [meta_stats[i]["display_label"] for i in g]
+                for g in merge_groups
+            ]
+        else:
+            log("  → No candidates above threshold.")
+
+        if merge_mode == "auto" and merge_groups:
+            pre_merge_stats = list(meta_stats)   # snapshot before merge
+            meta_labels, meta_stats = apply_directional_merge(
+                merge_groups, meta_stats, meta_labels, X, row_meta,
+                common_params, len(mice_list))
+            log(f"  → K reduced: {original_k} → {len(meta_stats)}  (auto-merge applied)")
+            log("  Merged meta-habitats:")
+            for s in meta_stats:
+                log(f"  {s['display_label']:5s}  {s['n_mice']:2d}/{len(mice_list)} mice  "
+                    f"{s['n_clusters']:2d} clusters")
+
     # ── Figures ───────────────────────────────────────────────────────────
     log("Generating figures…")
     n_mice = len(mice_list)
-    fig_mouse_index(mice_list, output_dir);                            log("  F0 done")
-    fig_summary_table(meta_stats, common_params, n_mice, output_dir);  log("  F1 done")
+    fig_cohort_tumor_profile(mice_list, output_dir);                    log("  F0.0 done (cohort tumor profile)")
+    fig_mouse_index(mice_list, output_dir);                              log("  F0 done")
+    fig_summary_table(meta_stats, common_params, n_mice, output_dir);   log("  F1 done")
     fig_k_selection(k_scores, chosen_k, output_dir, criterion=criterion); log("  F2 done")
-    fig_pca_scatter(X, meta_labels, meta_stats, output_dir);           log("  F3 done")
-    fig_profiles_heatmap(meta_stats, common_params, output_dir);       log("  F4 done")
+    fig_pca_scatter(X, meta_labels, meta_stats, output_dir);            log("  F3 done")
+    fig_profiles_heatmap(meta_stats, common_params, output_dir);        log("  F4 done")
     fig_meta_profiles_bar(meta_stats, common_params, n_mice, output_dir); log("  F5 done")
     fig_radar_per_mh(meta_stats, common_params, n_mice,
-                     X, meta_labels, row_meta, output_dir);            log("  F6 done")
-    fig_radar_combined(meta_stats, common_params, output_dir);         log("  F7 done")
-    fig_crosstab(row_meta, meta_labels, meta_stats, output_dir);       log("  F8 done")
+                     X, meta_labels, row_meta, output_dir);             log("  F6 done")
+    fig_radar_combined(meta_stats, common_params, output_dir);          log("  F7 done")
+    _f8_groups = merge_groups if merge_mode == "suggest" else []
+    fig_crosstab(row_meta, meta_labels, meta_stats, output_dir,
+                 merge_groups=_f8_groups);                              log("  F8 done")
+
+    if merge_mode != "off" and sim_matrix is not None:
+        fig_cosine_heatmap(
+            sim_matrix, pre_merge_stats, near_zero, merge_groups,
+            cosine_threshold, common_params, output_dir, merge_mode)
+        log("  F_cos done")
+
     seg_figs = fig_segmentation_maps(
         mice_list, row_meta, meta_labels, meta_stats, output_dir)
     log(f"  F9 done  ({len(seg_figs)} mouse map(s))")
@@ -1535,16 +2755,38 @@ def run_discovery(csv_paths: list, k_override: int | None,
         chosen_k, method, k_scores, output_dir,
         seg_figs=seg_figs,
         criterion=criterion,
+        merge_mode=merge_mode,
+        cosine_threshold=cosine_threshold,
+        merge_group_labels=merge_group_labels,
+        original_k=original_k,
     )
     log(f"PDF report     → {pdf_out}")
+
+    # ── Level-2 sub-clustering (optional) ────────────────────────────────
+    sub_results = {}
+    if sub_clust:
+        log("\n-- Level 2: intra-habitat sub-clustering --")
+        sub_results = run_sub_clustering(
+            mice_list, row_meta, meta_labels, meta_stats, common_params,
+            k_sub_max=k_sub_max, min_voxels=sub_min_voxels, log=log)
+        pdf2 = generate_subclust_pdf(sub_results, output_dir, len(mice_list),
+                                     mice_list=mice_list)
+        if pdf2:
+            log(f"Level-2 PDF    → {pdf2}")
+        else:
+            log("Level 2: no meta-habitats had sufficient voxels for sub-clustering.")
+
     log("Done.")
 
     return {
-        "meta_stats"   : meta_stats,
-        "common_params": common_params,
-        "chosen_k"     : chosen_k,
-        "k_scores"     : k_scores,
-        "output_dir"   : output_dir,
+        "meta_stats"       : meta_stats,
+        "common_params"    : common_params,
+        "chosen_k"         : chosen_k,
+        "k_scores"         : k_scores,
+        "output_dir"       : output_dir,
+        "merge_groups"     : merge_groups,
+        "merge_group_labels": merge_group_labels,
+        "sub_results"      : sub_results,
     }
 
 
@@ -1641,6 +2883,63 @@ class DiscoveryApp(tk.Tk):
             bg=_THEME["bg"], fg=_THEME["text"],
             selectcolor=_THEME["bg_card"], font=("Helvetica", 9),
         ).pack(anchor="w")
+
+        self._label(right, "2nd pass — directional merge")
+        self._merge_mode = tk.StringVar(value="suggest")
+        mf2 = tk.Frame(right, bg=_THEME["bg"])
+        mf2.pack(anchor="w", padx=6)
+        for val, txt in [
+            ("off",     "Off"),
+            ("suggest", "Suggest  (default — report only)"),
+            ("auto",    "Auto-merge"),
+        ]:
+            tk.Radiobutton(
+                mf2, text=txt, variable=self._merge_mode, value=val,
+                bg=_THEME["bg"], fg=_THEME["text"],
+                selectcolor=_THEME["bg_card"], font=("Helvetica", 9),
+            ).pack(anchor="w")
+
+        thr_row = tk.Frame(right, bg=_THEME["bg"])
+        thr_row.pack(anchor="w", padx=6, pady=(2, 0))
+        tk.Label(thr_row, text="Cosine threshold", font=("Helvetica", 9),
+                 bg=_THEME["bg"], fg=_THEME["text"]).pack(side=tk.LEFT)
+        self._cosine_thr = tk.DoubleVar(value=0.92)
+        tk.Spinbox(thr_row, from_=0.70, to=0.99, increment=0.01,
+                   textvariable=self._cosine_thr, format="%.2f",
+                   width=6, font=("Helvetica", 9),
+                   bg=_THEME["bg_input"], relief=tk.FLAT, bd=1,
+                   ).pack(side=tk.LEFT, padx=6)
+
+        # ── Level 2 — sub-clustering ──────────────────────────────────────
+        ttk.Separator(right).pack(fill="x", padx=4, pady=6)
+        self._label(right, "Level 2 — intra-habitat sub-clustering")
+        self._sub_clust = tk.BooleanVar(value=False)
+        tk.Checkbutton(right, text="Enable sub-clustering  (separate PDF)",
+                       variable=self._sub_clust,
+                       bg=_THEME["bg"], fg=_THEME["text"],
+                       activebackground=_THEME["bg"],
+                       font=("Helvetica", 9),
+                       selectcolor=_THEME["bg_input"]).pack(anchor="w", padx=6)
+        sub_k_row = tk.Frame(right, bg=_THEME["bg"])
+        sub_k_row.pack(anchor="w", padx=6, pady=(2, 0))
+        tk.Label(sub_k_row, text="Max K_sub  (K=1 = no split, always tested)",
+                 font=("Helvetica", 9),
+                 bg=_THEME["bg"], fg=_THEME["text"]).pack(side=tk.LEFT)
+        self._sub_kmax = tk.IntVar(value=4)
+        tk.Spinbox(sub_k_row, from_=2, to=8, textvariable=self._sub_kmax,
+                   width=3, font=("Helvetica", 9),
+                   bg=_THEME["bg_input"], relief=tk.FLAT, bd=1,
+                   ).pack(side=tk.LEFT, padx=6)
+        sub_v_row = tk.Frame(right, bg=_THEME["bg"])
+        sub_v_row.pack(anchor="w", padx=6, pady=(2, 0))
+        tk.Label(sub_v_row, text="Min voxels per MH", font=("Helvetica", 9),
+                 bg=_THEME["bg"], fg=_THEME["text"]).pack(side=tk.LEFT)
+        self._sub_min_vox = tk.IntVar(value=200)
+        tk.Spinbox(sub_v_row, from_=50, to=2000, increment=50,
+                   textvariable=self._sub_min_vox, width=6,
+                   font=("Helvetica", 9),
+                   bg=_THEME["bg_input"], relief=tk.FLAT, bd=1,
+                   ).pack(side=tk.LEFT, padx=6)
 
         self._label(right, "Force K  (0 = automatic selection)")
         self._k_force = tk.IntVar(value=0)
@@ -1783,12 +3082,17 @@ class DiscoveryApp(tk.Tk):
             )
             return
 
-        k_force   = int(self._k_force.get()) or None
-        k_range   = range(int(self._kmin.get()), int(self._kmax.get()) + 1)
-        n_init    = int(self._ninit.get())
-        method    = self._method.get()
-        criterion = self._k_criterion.get()
-        out_dir   = self._out_dir.get().strip()
+        k_force      = int(self._k_force.get()) or None
+        k_range      = range(int(self._kmin.get()), int(self._kmax.get()) + 1)
+        n_init       = int(self._ninit.get())
+        method       = self._method.get()
+        criterion    = self._k_criterion.get()
+        merge_mode   = self._merge_mode.get()
+        cosine_thr   = float(self._cosine_thr.get())
+        sub_clust    = bool(self._sub_clust.get())
+        sub_k_max    = int(self._sub_kmax.get())
+        sub_min_vox  = int(self._sub_min_vox.get())
+        out_dir      = self._out_dir.get().strip()
 
         if not out_dir:
             messagebox.showwarning("No output directory", "Please select an output directory.")
@@ -1797,13 +3101,18 @@ class DiscoveryApp(tk.Tk):
         self._run_btn.configure(state=tk.DISABLED, text="Running…")
         self._log("=" * 44)
         self._log(f"Starting  {len(csv_paths)} mice  method={method.upper()}  "
-                  f"criterion={criterion}")
+                  f"criterion={criterion}  merge={merge_mode}")
 
         def _worker():
             try:
                 run_discovery(csv_paths, k_force, k_range, n_init,
                               method, out_dir, self._q_log,
-                              criterion=criterion)
+                              criterion=criterion,
+                              merge_mode=merge_mode,
+                              cosine_threshold=cosine_thr,
+                              sub_clust=sub_clust,
+                              k_sub_max=sub_k_max,
+                              sub_min_voxels=sub_min_vox)
             except Exception as exc:
                 self._queue.put(("error", str(exc)))
             finally:
